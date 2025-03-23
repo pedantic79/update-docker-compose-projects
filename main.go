@@ -50,17 +50,17 @@ func loadProject(ctx context.Context, projectName string, configFile string) (*t
 }
 
 // Wrap creation of compse service
-func newDockerComposeService() api.Service {
+func newDockerComposeService() (api.Service, error) {
 	dockerCli, err := command.NewDockerCli()
 	if err != nil {
-		quit(err)
+		return nil, err
 	}
 
 	if err := dockerCli.Initialize(flags.NewClientOptions()); err != nil {
-		quit(err)
+		return nil, err
 	}
 
-	return compose.NewComposeService(dockerCli)
+	return compose.NewComposeService(dockerCli), nil
 }
 
 func main() {
@@ -73,26 +73,29 @@ func main() {
 	}
 	defer dockerClient.Close()
 
-	service := newDockerComposeService()
-	sv, err := service.List(ctx, api.ListOptions{All: true})
+	service, err := newDockerComposeService()
 	if err != nil {
 		quit(err)
 	}
 
-	for _, view := range sv {
-		projectName := view.Name
+	projectViews, err := service.List(ctx, api.ListOptions{All: true})
+	if err != nil {
+		quit(err)
+	}
+
+	for _, projectView := range projectViews {
+		projectName := projectView.Name
 
 		// only include running projects
-		if !strings.HasPrefix(view.Status, "running(") {
-			fmt.Fprintln(os.Stderr, "skipping:", projectName, view.Status)
+		if !strings.HasPrefix(projectView.Status, "running(") {
+			fmt.Fprintln(os.Stderr, "skipping:", projectName, projectView.Status)
 			continue
 		}
 
 		// load the project information for future commands
-		project, err := loadProject(ctx, projectName, view.ConfigFiles)
+		project, err := loadProject(ctx, projectName, projectView.ConfigFiles)
 		if err != nil {
-			fmt.Println(project, view.ConfigFiles, filepath.Dir(view.ConfigFiles))
-			quit(err)
+			quit(fmt.Errorf("%v, %s: %w", project, projectView.ConfigFiles, err))
 		}
 
 		// get Images for the project
@@ -101,57 +104,73 @@ func main() {
 			quit(err)
 		}
 
-		// Loop through the images
-		needsRestart := false
-		for i := range images {
-			image := &images[i]
-			fmt.Println(view.Name, image.Repository, image.ID)
-
-			// Attempt a image pull on the image
-			err := service.Pull(ctx, project, api.PullOptions{
-				Quiet:           false,
-				IgnoreFailures:  false,
-				IgnoreBuildable: true,
-			})
-			if err != nil {
-				quit(err)
-			}
-
-			// Check if the imageID has changed
-			imageWithTag := fmt.Sprintf("%s:%s", image.Repository, image.Tag)
-			currentImageID, err := GetImageID(dockerClient, imageWithTag)
-			if err != nil {
-				quit(err)
-			}
-
-			if currentImageID != image.ID {
-				fmt.Println(image.Repository, "has been updated")
-				needsRestart = true
-			}
+		// Do a pull on the images
+		needsRestart, err := updateImages(ctx, dockerClient, service, images, project)
+		if err != nil {
+			quit(err)
 		}
 
 		// If any of the images have been updated, then restart the project
 		if needsRestart {
-			// We're trying to replicate this command
-			// docker compose up --force-recreate --build --remove-orphans --pull always -d
-			// we're ignoring the pull here, because we've already pulled images previously
-			upOpts := api.UpOptions{
-				Create: api.CreateOptions{
-					Build:         &api.BuildOptions{},
-					RemoveOrphans: true,
-					Recreate:      api.RecreateForce,
-				},
-				// this specifies which services to start, we always want all of them
-				Start: api.StartOptions{
-					Project:  project,
-					Services: project.ServiceNames(),
-				},
-			}
-
-			fmt.Println("Restarting project:", projectName)
-			if err := service.Up(ctx, project, upOpts); err != nil {
+			if err := restartProject(ctx, service, project, projectName); err != nil {
 				quit(err)
 			}
 		}
 	}
+}
+
+func updateImages(ctx context.Context, dockerClient *client.Client, service api.Service, images []api.ImageSummary, project *types.Project) (bool, error) {
+	// pull all images for project
+	err := service.Pull(ctx, project, api.PullOptions{
+		Quiet:           false,
+		IgnoreFailures:  false,
+		IgnoreBuildable: true,
+	})
+	if err != nil {
+		return false, err
+	}
+
+	// check if each image is updated
+	needsRestart := false
+	for i := range images {
+		image := &images[i]
+
+		// Check if the imageID has changed
+		imageWithTag := fmt.Sprintf("%s:%s", image.Repository, image.Tag)
+		currentImageID, err := GetImageID(dockerClient, imageWithTag)
+		if err != nil {
+			return false, err
+		}
+
+		if currentImageID != image.ID {
+			fmt.Printf("%s has been updated: %s -> %s\n", image.Repository, image.ID, currentImageID)
+			needsRestart = true
+		}
+	}
+	return needsRestart, nil
+}
+
+// restartProject is trying to replicate this command
+// docker compose up --force-recreate --build --remove-orphans --pull always -d
+// we're ignoring the pull here, because we've already pulled images previously
+func restartProject(ctx context.Context, service api.Service, project *types.Project, projectName string) error {
+	upOpts := api.UpOptions{
+		Create: api.CreateOptions{
+			Build:         &api.BuildOptions{},
+			RemoveOrphans: true,
+			Recreate:      api.RecreateForce,
+		},
+		// this specifies which services to start, we always want all of them
+		Start: api.StartOptions{
+			Project:  project,
+			Services: project.ServiceNames(),
+		},
+	}
+
+	fmt.Println("Restarting project:", projectName)
+	if err := service.Up(ctx, project, upOpts); err != nil {
+		return err
+	}
+
+	return nil
 }
