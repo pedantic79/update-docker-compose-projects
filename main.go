@@ -16,12 +16,6 @@ import (
 	"github.com/docker/docker/client"
 )
 
-func quit(err error) {
-	// fmt.Fprintln(os.Stderr, err)
-	// os.Exit(1)
-	panic(err)
-}
-
 // GetImageID returns the ImageID via the docker API. Pass it the full image with tag
 func GetImageID(cli *client.Client, imageName string) (string, error) {
 	imageInspect, err := cli.ImageInspect(context.Background(), imageName)
@@ -61,62 +55,6 @@ func newDockerComposeService() (api.Service, error) {
 	}
 
 	return compose.NewComposeService(dockerCli), nil
-}
-
-func main() {
-	ctx := context.Background()
-
-	// Create a new Docker client
-	dockerClient, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-	if err != nil {
-		quit(err)
-	}
-	defer dockerClient.Close()
-
-	service, err := newDockerComposeService()
-	if err != nil {
-		quit(err)
-	}
-
-	projectViews, err := service.List(ctx, api.ListOptions{All: true})
-	if err != nil {
-		quit(err)
-	}
-
-	for _, projectView := range projectViews {
-		projectName := projectView.Name
-
-		// only include running projects
-		if !strings.HasPrefix(projectView.Status, "running(") {
-			fmt.Fprintln(os.Stderr, "skipping:", projectName, projectView.Status)
-			continue
-		}
-
-		// load the project information for future commands
-		project, err := loadProject(ctx, projectName, projectView.ConfigFiles)
-		if err != nil {
-			quit(fmt.Errorf("%v, %s: %w", project, projectView.ConfigFiles, err))
-		}
-
-		// get Images for the project
-		images, err := service.Images(ctx, projectName, api.ImagesOptions{})
-		if err != nil {
-			quit(err)
-		}
-
-		// Do a pull on the images
-		needsRestart, err := updateImages(ctx, dockerClient, service, images, project)
-		if err != nil {
-			quit(err)
-		}
-
-		// If any of the images have been updated, then restart the project
-		if needsRestart {
-			if err := restartProject(ctx, service, project, projectName); err != nil {
-				quit(err)
-			}
-		}
-	}
 }
 
 func updateImages(ctx context.Context, dockerClient *client.Client, service api.Service, images []api.ImageSummary, project *types.Project) (bool, error) {
@@ -173,4 +111,60 @@ func restartProject(ctx context.Context, service api.Service, project *types.Pro
 	}
 
 	return nil
+}
+
+func main() {
+	ctx := context.Background()
+
+	// Create a new Docker client
+	dockerClient, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		panic(err)
+	}
+	defer dockerClient.Close()
+
+	service, err := newDockerComposeService()
+	if err != nil {
+		panic(err)
+	}
+
+	projectViews, err := service.List(ctx, api.ListOptions{All: true})
+	if err != nil {
+		panic(err)
+	}
+
+	for _, projectView := range projectViews {
+		projectName := projectView.Name
+
+		// only include running projects
+		if !strings.HasPrefix(projectView.Status, "running(") {
+			fmt.Fprintln(os.Stderr, "skipping:", projectName, projectView.Status)
+			continue
+		}
+
+		// load the project information for future commands
+		project, err := loadProject(ctx, projectName, projectView.ConfigFiles)
+		if err != nil {
+			panic(fmt.Errorf("%v, %s: %w", project, projectView.ConfigFiles, err))
+		}
+
+		// get Images for the project
+		images, err := service.Images(ctx, projectName, api.ImagesOptions{})
+		if err != nil {
+			panic(err)
+		}
+
+		// Do a pull on the images
+		needsRestart, err := updateImages(ctx, dockerClient, service, images, project)
+		if err != nil {
+			panic(err)
+		}
+
+		// If any of the images have been updated, then restart the project
+		if needsRestart {
+			if err := restartProject(ctx, service, project, projectName); err != nil {
+				panic(err)
+			}
+		}
+	}
 }
