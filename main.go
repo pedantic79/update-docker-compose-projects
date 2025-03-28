@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -91,26 +92,42 @@ func updateImages(ctx context.Context, dockerClient *client.Client, service api.
 // restartProject is trying to replicate this command
 // docker compose up --force-recreate --build --remove-orphans --pull always -d
 // we're ignoring the pull here, because we've already pulled images previously
+// This doesn't work. Use runRestart
 func restartProject(ctx context.Context, service api.Service, project *types.Project, projectName string) error {
+	services := make([]string, 0, len(project.ServiceNames())+len(project.DisabledServiceNames()))
+	services = append(services, project.ServiceNames()...)
+	services = append(services, project.DisabledServiceNames()...)
+
 	upOpts := api.UpOptions{
 		Create: api.CreateOptions{
 			Build:         &api.BuildOptions{},
 			RemoveOrphans: true,
 			Recreate:      api.RecreateForce,
+			Services:      services,
 		},
 		// this specifies which services to start, we always want all of them
 		Start: api.StartOptions{
 			Project:  project,
-			Services: project.ServiceNames(),
+			Services: services,
 		},
 	}
 
-	fmt.Println("Restarting project:", projectName)
+	fmt.Println("Restarting project:", projectName, services)
 	if err := service.Up(ctx, project, upOpts); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+func runRestart(ctx context.Context, workingDir string) error {
+	cmd := exec.CommandContext(ctx, "docker", "compose", "up", "--force-recreate", "--build", "--remove-orphans", "-d")
+
+	cmd.Dir = workingDir
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	return cmd.Run()
 }
 
 func main() {
@@ -162,7 +179,11 @@ func main() {
 
 		// If any of the images have been updated, then restart the project
 		if needsRestart {
-			if err := restartProject(ctx, service, project, projectName); err != nil {
+			// if err := restartProject(ctx, service, project, projectName); err != nil {
+			// 	panic(err)
+			// }
+
+			if err := runRestart(ctx, project.WorkingDir); err != nil {
 				panic(err)
 			}
 		}
