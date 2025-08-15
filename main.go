@@ -14,17 +14,24 @@ import (
 	"github.com/docker/cli/cli/flags"
 	"github.com/docker/compose/v2/pkg/api"
 	"github.com/docker/compose/v2/pkg/compose"
+	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 )
 
 // GetImageID returns the ImageID via the docker API. Pass it the full image with tag
-func GetImageID(cli *client.Client, imageName string) (string, error) {
-	imageInspect, err := cli.ImageInspect(context.Background(), imageName)
+func GetImageID(ctx context.Context, cli *client.Client, imageName string) (string, error) {
+	imageInspect, err := cli.ImageInspect(ctx, imageName)
 	if err != nil {
 		return "", err
 	}
 
 	return imageInspect.ID, nil
+}
+
+func ImagePrune(ctx context.Context, cli *client.Client) (image.PruneReport, error) {
+	fmt.Println("Pruning images...")
+	return cli.ImagesPrune(ctx, filters.Args{})
 }
 
 func loadProject(ctx context.Context, projectName string, configFile string) (*types.Project, error) {
@@ -76,7 +83,7 @@ func updateImages(ctx context.Context, dockerClient *client.Client, service api.
 
 		// Check if the imageID has changed
 		imageWithTag := fmt.Sprintf("%s:%s", image.Repository, image.Tag)
-		currentImageID, err := GetImageID(dockerClient, imageWithTag)
+		currentImageID, err := GetImageID(ctx, dockerClient, imageWithTag)
 		if err != nil {
 			return false, err
 		}
@@ -92,38 +99,37 @@ func updateImages(ctx context.Context, dockerClient *client.Client, service api.
 // restartProject is trying to replicate this command
 // docker compose up --force-recreate --build --remove-orphans --pull always -d
 // we're ignoring the pull here, because we've already pulled images previously
-// This doesn't work. Use runRestart
-func restartProject(ctx context.Context, service api.Service, project *types.Project, projectName string) error {
-	services := make([]string, 0, len(project.ServiceNames())+len(project.DisabledServiceNames()))
-	services = append(services, project.ServiceNames()...)
-	services = append(services, project.DisabledServiceNames()...)
+//func restartProject(ctx context.Context, service api.Service, project *types.Project, projectName string) error {
+//	services := make([]string, 0, len(project.ServiceNames())+len(project.DisabledServiceNames()))
+//	services = append(services, project.ServiceNames()...)
+//	services = append(services, project.DisabledServiceNames()...)
+//
+//	upOpts := api.UpOptions{
+//		Create: api.CreateOptions{
+//			Build:         &api.BuildOptions{},
+//			RemoveOrphans: true,
+//			Recreate:      api.RecreateForce,
+//			Services:      services,
+//		},
+//		// this specifies which services to start, we always want all of them
+//		Start: api.StartOptions{
+//			Project:  project,
+//			Services: services,
+//		},
+//	}
+//
+//	fmt.Println("Restarting project:", projectName, services)
+//	if err := service.Up(ctx, project, upOpts); err != nil {
+//		return err
+//	}
+//
+//	return nil
+//}
 
-	upOpts := api.UpOptions{
-		Create: api.CreateOptions{
-			Build:         &api.BuildOptions{},
-			RemoveOrphans: true,
-			Recreate:      api.RecreateForce,
-			Services:      services,
-		},
-		// this specifies which services to start, we always want all of them
-		Start: api.StartOptions{
-			Project:  project,
-			Services: services,
-		},
-	}
-
-	fmt.Println("Restarting project:", projectName, services)
-	if err := service.Up(ctx, project, upOpts); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func runRestart(ctx context.Context, workingDir string) error {
+func runRestart(ctx context.Context, project *types.Project) error {
 	cmd := exec.CommandContext(ctx, "docker", "compose", "up", "--force-recreate", "--build", "--remove-orphans", "-d")
 
-	cmd.Dir = workingDir
+	cmd.Dir = project.WorkingDir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
@@ -183,7 +189,11 @@ func main() {
 			// 	panic(err)
 			// }
 
-			if err := runRestart(ctx, project.WorkingDir); err != nil {
+			if err := runRestart(ctx, project); err != nil {
+				panic(err)
+			}
+
+			if _, err := ImagePrune(ctx, dockerClient); err != nil {
 				panic(err)
 			}
 		}
