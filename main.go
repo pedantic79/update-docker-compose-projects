@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -65,7 +66,7 @@ func newDockerComposeService() (api.Service, error) {
 	return compose.NewComposeService(dockerCli), nil
 }
 
-func updateImages(ctx context.Context, dockerClient *client.Client, service api.Service, images []api.ImageSummary, project *types.Project) (bool, error) {
+func updateImages(ctx context.Context, dockerClient *client.Client, service api.Service, images map[string]api.ImageSummary, project *types.Project) (bool, error) {
 	// pull all images for project
 	err := service.Pull(ctx, project, api.PullOptions{
 		Quiet:           false,
@@ -78,8 +79,8 @@ func updateImages(ctx context.Context, dockerClient *client.Client, service api.
 
 	// check if each image is updated
 	needsRestart := false
-	for i := range images {
-		image := &images[i]
+	for i := range maps.Keys(images) {
+		image := images[i]
 
 		// Check if the imageID has changed
 		imageWithTag := fmt.Sprintf("%s:%s", image.Repository, image.Tag)
@@ -99,32 +100,33 @@ func updateImages(ctx context.Context, dockerClient *client.Client, service api.
 // restartProject is trying to replicate this command
 // docker compose up --force-recreate --build --remove-orphans --pull always -d
 // we're ignoring the pull here, because we've already pulled images previously
-//func restartProject(ctx context.Context, service api.Service, project *types.Project, projectName string) error {
-//	services := make([]string, 0, len(project.ServiceNames())+len(project.DisabledServiceNames()))
-//	services = append(services, project.ServiceNames()...)
-//	services = append(services, project.DisabledServiceNames()...)
-//
-//	upOpts := api.UpOptions{
-//		Create: api.CreateOptions{
-//			Build:         &api.BuildOptions{},
-//			RemoveOrphans: true,
-//			Recreate:      api.RecreateForce,
-//			Services:      services,
-//		},
-//		// this specifies which services to start, we always want all of them
-//		Start: api.StartOptions{
-//			Project:  project,
-//			Services: services,
-//		},
-//	}
-//
-//	fmt.Println("Restarting project:", projectName, services)
-//	if err := service.Up(ctx, project, upOpts); err != nil {
-//		return err
-//	}
-//
-//	return nil
-//}
+// func restartProject(ctx context.Context, service api.Service, project *types.Project, projectName string) error {
+// 	services := make([]string, 0, len(project.ServiceNames())+len(project.DisabledServiceNames()))
+// 	services = append(services, project.ServiceNames()...)
+// 	services = append(services, project.DisabledServiceNames()...)
+
+// 	upOpts := api.UpOptions{
+// 		Create: api.CreateOptions{
+// 			Build:         &api.BuildOptions{},
+// 			RemoveOrphans: true,
+// 			Recreate:      api.RecreateForce,
+// 			Services:      services,
+// 		},
+// 		// this specifies which services to start, we always want all of them
+// 		Start: api.StartOptions{
+// 			Project:  project,
+// 			Services: services,
+// 			Wait:     true,
+// 		},
+// 	}
+
+// 	fmt.Println("Restarting project:", projectName, services)
+// 	if err := service.Up(ctx, project, upOpts); err != nil {
+// 		return err
+// 	}
+
+// 	return nil
+// }
 
 func runRestart(ctx context.Context, project *types.Project) error {
 	cmd := exec.CommandContext(ctx, "docker", "compose", "up", "--force-recreate", "--build", "--remove-orphans", "-d")
