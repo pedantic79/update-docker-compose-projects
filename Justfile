@@ -13,3 +13,6 @@ build-pipeline hostname arch: (build arch) (copy hostname) clean
 
 pipeline hostname:
     just build-pipeline "{{hostname}}" $(jq -r --arg name "{{hostname}}" '.[$name]' .mapping.json)
+
+build-all: #!/usr/bin/env bash
+    for i in $(jq -r 'to_entries|.[].key' .mapping.json); do just pipeline $i; done
