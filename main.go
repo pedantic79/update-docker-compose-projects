@@ -13,11 +13,9 @@ import (
 	"github.com/compose-spec/compose-go/v2/types"
 	"github.com/docker/cli/cli/command"
 	"github.com/docker/cli/cli/flags"
-	"github.com/docker/compose/v2/pkg/api"
-	"github.com/docker/compose/v2/pkg/compose"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/client"
+	"github.com/docker/compose/v5/pkg/api"
+	"github.com/docker/compose/v5/pkg/compose"
+	"github.com/moby/moby/client"
 )
 
 // GetImageID returns the ImageID via the docker API. Pass it the full image with tag
@@ -30,9 +28,9 @@ func GetImageID(ctx context.Context, cli *client.Client, imageName string) (stri
 	return imageInspect.ID, nil
 }
 
-func ImagePrune(ctx context.Context, cli *client.Client) (image.PruneReport, error) {
+func ImagePrune(ctx context.Context, cli *client.Client) (client.ImagePruneResult, error) {
 	fmt.Println("Pruning images...")
-	return cli.ImagesPrune(ctx, filters.Args{})
+	return cli.ImagePrune(ctx, client.ImagePruneOptions{})
 }
 
 func loadProject(ctx context.Context, projectName string, configFile string) (*types.Project, error) {
@@ -53,7 +51,7 @@ func loadProject(ctx context.Context, projectName string, configFile string) (*t
 }
 
 // Wrap creation of compse service
-func newDockerComposeService() (api.Service, error) {
+func newDockerComposeService() (api.Compose, error) {
 	dockerCli, err := command.NewDockerCli()
 	if err != nil {
 		return nil, err
@@ -63,10 +61,10 @@ func newDockerComposeService() (api.Service, error) {
 		return nil, err
 	}
 
-	return compose.NewComposeService(dockerCli), nil
+	return compose.NewComposeService(dockerCli)
 }
 
-func updateImages(ctx context.Context, dockerClient *client.Client, service api.Service, images map[string]api.ImageSummary, project *types.Project) (bool, error) {
+func updateImages(ctx context.Context, dockerClient *client.Client, service api.Compose, images map[string]api.ImageSummary, project *types.Project) (bool, error) {
 	// pull all images for project
 	err := service.Pull(ctx, project, api.PullOptions{
 		Quiet:           false,
