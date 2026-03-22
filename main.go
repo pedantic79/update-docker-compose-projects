@@ -13,6 +13,7 @@ import (
 	"github.com/compose-spec/compose-go/v2/types"
 	"github.com/docker/cli/cli/command"
 	"github.com/docker/cli/cli/flags"
+	"github.com/docker/compose/v5/cmd/display"
 	"github.com/docker/compose/v5/pkg/api"
 	"github.com/docker/compose/v5/pkg/compose"
 	"github.com/moby/moby/client"
@@ -61,7 +62,9 @@ func newDockerComposeService() (api.Compose, error) {
 		return nil, err
 	}
 
-	return compose.NewComposeService(dockerCli)
+	ttyDisplay := display.Full(dockerCli.Err(), dockerCli.Out(), false)
+
+	return compose.NewComposeService(dockerCli, compose.WithEventProcessor(ttyDisplay))
 }
 
 func updateImages(ctx context.Context, dockerClient *client.Client, service api.Compose, images map[string]api.ImageSummary, project *types.Project) (bool, error) {
@@ -75,8 +78,9 @@ func updateImages(ctx context.Context, dockerClient *client.Client, service api.
 		return false, err
 	}
 
+	logs := make([]string, 0, len(images))
+
 	// check if each image is updated
-	needsRestart := false
 	for i := range maps.Keys(images) {
 		image := images[i]
 
@@ -88,11 +92,15 @@ func updateImages(ctx context.Context, dockerClient *client.Client, service api.
 		}
 
 		if currentImageID != image.ID {
-			fmt.Printf("%s has been updated: %s -> %s\n", image.Repository, image.ID, currentImageID)
-			needsRestart = true
+			logs = append(logs, fmt.Sprintf("%s has been updated: %s -> %s", image.Repository, image.ID, currentImageID))
 		}
 	}
-	return needsRestart, nil
+
+	for _, log := range logs {
+		fmt.Println(log)
+	}
+
+	return len(logs) > 0, nil
 }
 
 // restartProject is trying to replicate this command
@@ -140,7 +148,7 @@ func main() {
 	ctx := context.Background()
 
 	// Create a new Docker client
-	dockerClient, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	dockerClient, err := client.New(client.FromEnv, client.WithAPIVersionFromEnv())
 	if err != nil {
 		panic(err)
 	}
@@ -158,6 +166,11 @@ func main() {
 
 	for _, projectView := range projectViews {
 		projectName := projectView.Name
+
+		service, err := newDockerComposeService()
+		if err != nil {
+			panic(err)
+		}
 
 		// only include running projects
 		if !strings.HasPrefix(projectView.Status, "running(") {
