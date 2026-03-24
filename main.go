@@ -3,174 +3,36 @@ package main
 import (
 	"context"
 	"fmt"
-	"maps"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 
-	"github.com/compose-spec/compose-go/v2/cli"
-	"github.com/compose-spec/compose-go/v2/types"
-	"github.com/docker/cli/cli/command"
-	"github.com/docker/cli/cli/flags"
-	"github.com/docker/compose/v5/cmd/display"
 	"github.com/docker/compose/v5/pkg/api"
-	"github.com/docker/compose/v5/pkg/compose"
 	"github.com/moby/moby/client"
+	"github.com/pedantic79/update-docker-compose-projects/dockercli"
+	"github.com/pedantic79/update-docker-compose-projects/dockercompose"
+	"github.com/pedantic79/update-docker-compose-projects/utils"
 )
 
-// GetImageID returns the ImageID via the docker API. Pass it the full image with tag
-func GetImageID(ctx context.Context, cli *client.Client, imageName string) (string, error) {
-	imageInspect, err := cli.ImageInspect(ctx, imageName)
+func unwrap[T any](v T, err error) T {
 	if err != nil {
-		return "", err
+		panic(err)
 	}
-
-	return imageInspect.ID, nil
-}
-
-func ImagePrune(ctx context.Context, cli *client.Client) (client.ImagePruneResult, error) {
-	fmt.Println("Pruning images...")
-	return cli.ImagePrune(ctx, client.ImagePruneOptions{})
-}
-
-func loadProject(ctx context.Context, projectName string, configFile string) (*types.Project, error) {
-	workingDir := filepath.Dir(configFile)
-
-	options := &cli.ProjectOptions{
-		WorkingDir:  workingDir,
-		ConfigPaths: []string{configFile},
-		Name:        projectName,
-	}
-
-	project, err := options.LoadProject(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	return project, nil
-}
-
-// Wrap creation of compse service
-func newDockerComposeService() (api.Compose, error) {
-	dockerCli, err := command.NewDockerCli()
-	if err != nil {
-		return nil, err
-	}
-
-	if err := dockerCli.Initialize(flags.NewClientOptions()); err != nil {
-		return nil, err
-	}
-
-	ttyDisplay := display.Full(dockerCli.Err(), dockerCli.Out(), false)
-
-	return compose.NewComposeService(dockerCli, compose.WithEventProcessor(ttyDisplay))
-}
-
-func updateImages(ctx context.Context, dockerClient *client.Client, service api.Compose, images map[string]api.ImageSummary, project *types.Project) (bool, error) {
-	// pull all images for project
-	err := service.Pull(ctx, project, api.PullOptions{
-		Quiet:           false,
-		IgnoreFailures:  false,
-		IgnoreBuildable: true,
-	})
-	if err != nil {
-		return false, err
-	}
-
-	logs := make([]string, 0, len(images))
-
-	// check if each image is updated
-	for i := range maps.Keys(images) {
-		image := images[i]
-
-		// Check if the imageID has changed
-		imageWithTag := fmt.Sprintf("%s:%s", image.Repository, image.Tag)
-		currentImageID, err := GetImageID(ctx, dockerClient, imageWithTag)
-		if err != nil {
-			return false, err
-		}
-
-		if currentImageID != image.ID {
-			logs = append(logs, fmt.Sprintf("%s has been updated: %s -> %s", image.Repository, image.ID, currentImageID))
-		}
-	}
-
-	for _, log := range logs {
-		fmt.Println(log)
-	}
-
-	return len(logs) > 0, nil
-}
-
-// restartProject is trying to replicate this command
-// docker compose up --force-recreate --build --remove-orphans --pull always -d
-// we're ignoring the pull here, because we've already pulled images previously
-// func restartProject(ctx context.Context, service api.Service, project *types.Project, projectName string) error {
-// 	services := make([]string, 0, len(project.ServiceNames())+len(project.DisabledServiceNames()))
-// 	services = append(services, project.ServiceNames()...)
-// 	services = append(services, project.DisabledServiceNames()...)
-
-// 	upOpts := api.UpOptions{
-// 		Create: api.CreateOptions{
-// 			Build:         &api.BuildOptions{},
-// 			RemoveOrphans: true,
-// 			Recreate:      api.RecreateForce,
-// 			Services:      services,
-// 		},
-// 		// this specifies which services to start, we always want all of them
-// 		Start: api.StartOptions{
-// 			Project:  project,
-// 			Services: services,
-// 			Wait:     true,
-// 		},
-// 	}
-
-// 	fmt.Println("Restarting project:", projectName, services)
-// 	if err := service.Up(ctx, project, upOpts); err != nil {
-// 		return err
-// 	}
-
-// 	return nil
-// }
-
-func runRestart(ctx context.Context, project *types.Project) error {
-	cmd := exec.CommandContext(ctx, "docker", "compose", "up", "--force-recreate", "--build", "--remove-orphans", "-d")
-
-	cmd.Dir = project.WorkingDir
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	return cmd.Run()
+	return v
 }
 
 func main() {
 	ctx := context.Background()
 
 	// Create a new Docker client
-	dockerClient, err := client.New(client.FromEnv, client.WithAPIVersionFromEnv())
-	if err != nil {
-		panic(err)
-	}
+	dockerClient := unwrap(client.New(client.FromEnv, client.WithAPIVersionFromEnv()))
 	defer dockerClient.Close()
 
-	service, err := newDockerComposeService()
-	if err != nil {
-		panic(err)
-	}
-
-	projectViews, err := service.List(ctx, api.ListOptions{All: true})
-	if err != nil {
-		panic(err)
-	}
+	dockerCli := unwrap(utils.NewDockerCli())
+	projectViews := unwrap(dockercompose.GetList(ctx, dockerCli, api.ListOptions{All: true}))
 
 	for _, projectView := range projectViews {
+		fmt.Printf("Name:%s, Status:%s ConfigFile:%s\n", projectView.Name, projectView.Status, projectView.ConfigFiles)
 		projectName := projectView.Name
-
-		service, err := newDockerComposeService()
-		if err != nil {
-			panic(err)
-		}
 
 		// only include running projects
 		if !strings.HasPrefix(projectView.Status, "running(") {
@@ -178,37 +40,23 @@ func main() {
 			continue
 		}
 
-		// load the project information for future commands
-		project, err := loadProject(ctx, projectName, projectView.ConfigFiles)
-		if err != nil {
-			panic(fmt.Errorf("%v, %s: %w", project, projectView.ConfigFiles, err))
-		}
-
-		// get Images for the project
-		images, err := service.Images(ctx, projectName, api.ImagesOptions{})
-		if err != nil {
-			panic(err)
-		}
+		project := unwrap(dockercompose.LoadProject(ctx, dockerCli, projectView))
+		images := unwrap(dockercompose.GetImages(ctx, dockerCli, projectName, api.ImagesOptions{}))
 
 		// Do a pull on the images
-		needsRestart, err := updateImages(ctx, dockerClient, service, images, project)
+		err := dockercompose.UpdateImages(ctx, dockerCli, project)
 		if err != nil {
 			panic(err)
 		}
 
+		needsRestart := unwrap(dockercli.NeedsRestart(ctx, dockerClient, images))
 		// If any of the images have been updated, then restart the project
 		if needsRestart {
-			// if err := restartProject(ctx, service, project, projectName); err != nil {
-			// 	panic(err)
-			// }
-
-			if err := runRestart(ctx, project); err != nil {
+			err := dockercompose.Restart(ctx, dockerCli, project)
+			if err != nil {
 				panic(err)
 			}
-
-			if _, err := ImagePrune(ctx, dockerClient); err != nil {
-				panic(err)
-			}
+			_ = unwrap(dockercli.ImagePrune(ctx, dockerClient))
 		}
 	}
 }
