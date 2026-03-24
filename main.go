@@ -8,7 +8,7 @@ import (
 
 	"github.com/docker/compose/v5/pkg/api"
 	"github.com/moby/moby/client"
-	"github.com/pedantic79/update-docker-compose-projects/dockercli"
+	"github.com/pedantic79/update-docker-compose-projects/dockerclient"
 	"github.com/pedantic79/update-docker-compose-projects/dockercompose"
 	"github.com/pedantic79/update-docker-compose-projects/utils"
 )
@@ -27,12 +27,13 @@ func main() {
 	dockerClient := unwrap(client.New(client.FromEnv, client.WithAPIVersionFromEnv()))
 	defer dockerClient.Close()
 
+	// Create a new Docker cli
 	dockerCli := unwrap(utils.NewDockerCli())
-	projectViews := unwrap(dockercompose.GetList(ctx, dockerCli, api.ListOptions{All: true}))
+	projectViews := unwrap(dockercompose.ServiceList(ctx, dockerCli, api.ListOptions{All: true}))
 
 	for _, projectView := range projectViews {
-		fmt.Printf("Name:%s, Status:%s ConfigFile:%s\n", projectView.Name, projectView.Status, projectView.ConfigFiles)
 		projectName := projectView.Name
+		fmt.Printf("Name:%s, Status:%s ConfigFile:%s\n", projectName, projectView.Status, projectView.ConfigFiles)
 
 		// only include running projects
 		if !strings.HasPrefix(projectView.Status, "running(") {
@@ -40,23 +41,26 @@ func main() {
 			continue
 		}
 
-		project := unwrap(dockercompose.LoadProject(ctx, dockerCli, projectView))
-		images := unwrap(dockercompose.GetImages(ctx, dockerCli, projectName, api.ImagesOptions{}))
+		// get project from projectView
+		project := unwrap(dockercompose.ServiceLoadProject(ctx, dockerCli, projectView))
+
+		// Get original image summary
+		images := unwrap(dockercompose.ServiceImages(ctx, dockerCli, projectName, api.ImagesOptions{}))
 
 		// Do a pull on the images
-		err := dockercompose.UpdateImages(ctx, dockerCli, project)
+		err := dockercompose.ServicePull(ctx, dockerCli, project)
 		if err != nil {
 			panic(err)
 		}
 
-		needsRestart := unwrap(dockercli.NeedsRestart(ctx, dockerClient, images))
 		// If any of the images have been updated, then restart the project
+		needsRestart := unwrap(dockerclient.NeedsRestart(ctx, dockerClient, images))
 		if needsRestart {
-			err := dockercompose.Restart(ctx, dockerCli, project)
+			err := dockercompose.ServiceUp(ctx, dockerCli, project)
 			if err != nil {
 				panic(err)
 			}
-			_ = unwrap(dockercli.ImagePrune(ctx, dockerClient))
+			_ = unwrap(dockerclient.ImagePrune(ctx, dockerClient))
 		}
 	}
 }

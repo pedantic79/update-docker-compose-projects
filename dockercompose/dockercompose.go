@@ -28,10 +28,10 @@ func newDockerComposeService(dockerCli *command.DockerCli) (api.Compose, error) 
 	return compose.NewComposeService(dockerCli, compose.WithEventProcessor(ttyDisplay))
 }
 
-// Restart is trying to replicate this command
+// ServiceUp is trying to replicate this command
 // docker compose up --force-recreate --build --remove-orphans --pull always -d
 // we're ignoring the pull here, because we've already pulled images previously
-func Restart(ctx context.Context, dockerCli *command.DockerCli, project *types.Project) error {
+func ServiceUp(ctx context.Context, dockerCli *command.DockerCli, project *types.Project) error {
 	fmt.Println("Restarting", project.Name)
 
 	// Create a new Compose service instance
@@ -74,8 +74,7 @@ func Restart(ctx context.Context, dockerCli *command.DockerCli, project *types.P
 	})
 }
 
-func GetList(ctx context.Context, dockerCli *command.DockerCli, listOpts api.ListOptions) ([]api.Stack, error) {
-	// Create a new Compose service instance
+func ServiceList(ctx context.Context, dockerCli *command.DockerCli, listOpts api.ListOptions) ([]api.Stack, error) {
 	service, err := newDockerComposeService(dockerCli)
 	if err != nil {
 		return nil, err
@@ -84,8 +83,7 @@ func GetList(ctx context.Context, dockerCli *command.DockerCli, listOpts api.Lis
 	return service.List(ctx, listOpts)
 }
 
-func GetImages(ctx context.Context, dockerCli *command.DockerCli, projectName string, imagesOpts api.ImagesOptions) (map[string]api.ImageSummary, error) {
-	// Create a new Compose service instance
+func ServiceImages(ctx context.Context, dockerCli *command.DockerCli, projectName string, imagesOpts api.ImagesOptions) (map[string]api.ImageSummary, error) {
 	service, err := newDockerComposeService(dockerCli)
 	if err != nil {
 		return nil, err
@@ -94,7 +92,7 @@ func GetImages(ctx context.Context, dockerCli *command.DockerCli, projectName st
 	return service.Images(ctx, projectName, imagesOpts)
 }
 
-func UpdateImages(ctx context.Context, dockerCli *command.DockerCli, project *types.Project) error {
+func ServicePull(ctx context.Context, dockerCli *command.DockerCli, project *types.Project) error {
 	service, err := newDockerComposeService(dockerCli)
 	if err != nil {
 		return err
@@ -107,21 +105,18 @@ func UpdateImages(ctx context.Context, dockerCli *command.DockerCli, project *ty
 	})
 }
 
-func LoadProject(ctx context.Context, dockerCli *command.DockerCli, stack api.Stack) (*types.Project, error) {
+func ServiceLoadProject(ctx context.Context, dockerCli *command.DockerCli, stack api.Stack) (*types.Project, error) {
 	configFile := stack.ConfigFiles
 	workingDir := filepath.Dir(configFile)
-
-	options := api.ProjectLoadOptions{
-		WorkingDir:  workingDir,
-		ConfigPaths: []string{configFile},
-	}
-
 	service, err := newDockerComposeService(dockerCli)
 	if err != nil {
 		return nil, err
 	}
 
-	project, err := service.LoadProject(ctx, options)
+	project, err := service.LoadProject(ctx, api.ProjectLoadOptions{
+		WorkingDir:  workingDir,
+		ConfigPaths: []string{configFile},
+	})
 	if err != nil {
 		return nil, err
 	}
