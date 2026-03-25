@@ -7,10 +7,7 @@ import (
 	"strings"
 
 	"github.com/docker/compose/v5/pkg/api"
-	"github.com/moby/moby/client"
 	"github.com/pedantic79/update-docker-compose-projects/dockerclient"
-	"github.com/pedantic79/update-docker-compose-projects/dockercompose"
-	"github.com/pedantic79/update-docker-compose-projects/utils"
 )
 
 func unwrap[T any](v T, err error) T {
@@ -22,15 +19,11 @@ func unwrap[T any](v T, err error) T {
 
 func main() {
 	ctx := context.Background()
+	client := unwrap(dockerclient.New())
+	defer client.Close()
 
-	// Create a new Docker client
-	dockerClient := unwrap(client.New(client.FromEnv, client.WithAPIVersionFromEnv()))
-	defer dockerClient.Close()
-
-	// Create a new Docker cli
-	dockerCli := unwrap(utils.NewDockerCli())
-	projectViews := unwrap(dockercompose.ServiceList(ctx, dockerCli, api.ListOptions{All: true}))
-
+	needsPrune := false
+	projectViews := unwrap(client.ServiceList(ctx, api.ListOptions{All: true}))
 	for _, projectView := range projectViews {
 		projectName := projectView.Name
 		fmt.Printf("Name:%s, Status:%s ConfigFile:%s\n", projectName, projectView.Status, projectView.ConfigFiles)
@@ -42,25 +35,22 @@ func main() {
 		}
 
 		// get project from projectView
-		project := unwrap(dockercompose.ServiceLoadProject(ctx, dockerCli, projectView))
-
 		// Get original image summary
-		images := unwrap(dockercompose.ServiceImages(ctx, dockerCli, projectName, api.ImagesOptions{}))
-
 		// Do a pull on the images
-		err := dockercompose.ServicePull(ctx, dockerCli, project)
-		if err != nil {
-			panic(err)
-		}
+		project := unwrap(client.ServiceLoadProject(ctx, projectView))
+		images := unwrap(client.ServiceImages(ctx, projectName, api.ImagesOptions{}))
+		unwrap(client.ServicePull(ctx, project))
 
 		// If any of the images have been updated, then restart the project
-		needsRestart := unwrap(dockerclient.NeedsRestart(ctx, dockerClient, images))
+		needsRestart := unwrap(client.NeedsRestart(ctx, images))
 		if needsRestart {
-			err := dockercompose.ServiceUp(ctx, dockerCli, project)
-			if err != nil {
-				panic(err)
-			}
-			_ = unwrap(dockerclient.ImagePrune(ctx, dockerClient))
+			unwrap(client.ServiceUp(ctx, project))
+			needsPrune = true
 		}
+	}
+
+	if needsPrune {
+		fmt.Println("Pruning images...")
+		_ = unwrap(client.ImagePrune(ctx))
 	}
 }
