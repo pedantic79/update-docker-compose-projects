@@ -50,7 +50,6 @@ func main() {
 	}
 
 	if needsPrune {
-		fmt.Println("Pruning images...")
 		_ = unwrap(client.ImagePrune(ctx))
 	}
 }
