@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/docker/compose/v5/pkg/api"
+	"github.com/fatih/color"
 	"github.com/pedantic79/update-docker-compose-projects/dockerclient"
 )
 
@@ -24,13 +25,22 @@ func main() {
 
 	needsPrune := false
 	projectViews := unwrap(client.ServiceList(ctx, api.ListOptions{All: true}))
-	for _, projectView := range projectViews {
+	for i, projectView := range projectViews {
 		projectName := projectView.Name
-		fmt.Printf("Name:%s, Status:%s ConfigFile:%s\n", projectName, projectView.Status, projectView.ConfigFiles)
+		if i > 0 {
+			fmt.Println()
+		}
+
+		fmt.Printf("Name:%s, Status:%v\n",
+			color.RedString(projectName),
+			color.BlueString(projectView.Status))
 
 		// only include running projects
 		if !strings.HasPrefix(projectView.Status, "running(") {
-			fmt.Fprintln(os.Stderr, "skipping:", projectName, projectView.Status)
+			fmt.Fprintf(os.Stderr,
+				"skipping: %s (Status: %s)\n",
+				color.RedString(projectName),
+				color.BlueString(projectView.Status))
 			continue
 		}
 
@@ -43,8 +53,8 @@ func main() {
 
 		// If any of the images have been updated, then restart the project
 		needsRestart := unwrap(client.NeedsRestart(ctx, images))
-		if needsRestart {
-			unwrap(client.ServiceUp(ctx, project))
+		if len(needsRestart) > 0 {
+			unwrap(client.ServiceUp(ctx, project, needsRestart))
 			needsPrune = true
 		}
 	}

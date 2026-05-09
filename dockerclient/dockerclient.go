@@ -12,6 +12,7 @@ import (
 	"github.com/docker/compose/v5/cmd/display"
 	"github.com/docker/compose/v5/pkg/api"
 	"github.com/docker/compose/v5/pkg/compose"
+	"github.com/fatih/color"
 	"github.com/moby/moby/client"
 )
 
@@ -51,8 +52,8 @@ func (d *DockerClient) newDockerComposeService() (api.Compose, error) {
 	return compose.NewComposeService(d.dockerCli, compose.WithEventProcessor(ttyDisplay))
 }
 
-func (d *DockerClient) NeedsRestart(ctx context.Context, originalImages map[string]api.ImageSummary) (bool, error) {
-	logs := make([]string, 0, len(originalImages))
+func (d *DockerClient) NeedsRestart(ctx context.Context, originalImages map[string]api.ImageSummary) (map[string][2]string, error) {
+	logs := map[string][2]string{}
 
 	// check if each image is updated
 	for oImage := range maps.Values(originalImages) {
@@ -61,23 +62,19 @@ func (d *DockerClient) NeedsRestart(ctx context.Context, originalImages map[stri
 		imageWithTag := fmt.Sprintf("%s:%s", oImage.Repository, oImage.Tag)
 		currentImage, err := d.client.ImageInspect(ctx, imageWithTag)
 		if err != nil {
-			return false, err
+			return map[string][2]string{}, err
 		}
 
 		if currentImage.ID != oImage.ID {
-			logs = append(logs, fmt.Sprintf("%s has been updated: %s -> %s", oImage.Repository, oImage.ID, currentImage.ID))
+			logs[imageWithTag] = [2]string{oImage.ID, currentImage.ID}
 		}
 	}
 
-	for _, log := range logs {
-		fmt.Println(log)
-	}
-
-	return len(logs) > 0, nil
+	return logs, nil
 }
 
 func (d *DockerClient) ImagePrune(ctx context.Context) (client.ImagePruneResult, error) {
-	fmt.Println("Pruning images...")
+	fmt.Println(color.RedString("Pruning images..."))
 	return d.client.ImagePrune(ctx, client.ImagePruneOptions{})
 }
 
@@ -102,8 +99,14 @@ func (d *DockerClient) ServiceImages(ctx context.Context, projectName string, im
 // ServiceUp is trying to replicate this command
 // docker compose up --force-recreate --build --remove-orphans --pull always -d
 // we're ignoring the pull here, because we've already pulled images previously
-func (d *DockerClient) ServiceUp(ctx context.Context, project *types.Project) (any, error) {
-	fmt.Println("Restarting", project.Name)
+func (d *DockerClient) ServiceUp(ctx context.Context, project *types.Project, needsRestart map[string][2]string) (any, error) {
+	for image, ids := range needsRestart {
+		fmt.Printf("Restarting %s[%s]\nOld: %s\nNew: %s\n",
+			color.RedString(project.Name),
+			color.BlueString(image),
+			color.BlueString(ids[0]),
+			color.BlueString(ids[1]))
+	}
 
 	// Create a new Compose service instance
 	service, err := d.newDockerComposeService()
