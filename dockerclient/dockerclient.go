@@ -16,6 +16,11 @@ import (
 	"github.com/moby/moby/client"
 )
 
+var (
+	orange       = color.RGB(255, 128, 0)
+	orangeString = orange.SprintfFunc()
+)
+
 type DockerClient struct {
 	client    *client.Client
 	dockerCli *command.DockerCli
@@ -104,8 +109,9 @@ func (d *DockerClient) ServiceUp(ctx context.Context, project *types.Project, ne
 		fmt.Printf("Restarting %s[%s]\nOld: %s\nNew: %s\n",
 			color.RedString(project.Name),
 			color.BlueString(image),
-			color.BlueString(ids[0]),
-			color.BlueString(ids[1]))
+			orangeString(ids[0]),
+			orangeString(ids[1]),
+		)
 	}
 
 	// Create a new Compose service instance
