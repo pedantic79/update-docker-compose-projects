@@ -3,10 +3,9 @@ package updater
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
-
-	"github.com/compose-spec/compose-go/v2/types"
 )
 
 func TestProjectRefEligible(t *testing.T) {
@@ -34,7 +33,7 @@ func TestRunConvergesEligibleProjectsAndSkipsStoppedProjects(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	wantCalls := []string{"discover", "load:running", "pull:running", "up:running", "prune"}
+	wantCalls := []string{"discover", "open:running", "pull:running", "up:running", "prune"}
 	if !reflect.DeepEqual(backend.calls, wantCalls) {
 		t.Fatalf("calls = %v, want %v", backend.calls, wantCalls)
 	}
@@ -93,10 +92,12 @@ func TestRunIsolatesAndAggregatesProjectFailures(t *testing.T) {
 			{Name: "up-fails", Services: []string{"web"}},
 			{Name: "succeeds", Services: []string{"web"}},
 		},
-		loadErrors:    map[string]error{"load-fails": loadErr},
-		sessionErrors: map[string]error{"session-fails": sessionErr},
-		pullErrors:    map[string]error{"pull-fails": pullErr},
-		upErrors:      map[string][]error{"up-fails": {upErr}},
+		openErrors: map[string]error{
+			"load-fails":    fmt.Errorf("load Compose project: %w", loadErr),
+			"session-fails": fmt.Errorf("create Compose progress session: %w", sessionErr),
+		},
+		pullErrors: map[string]error{"pull-fails": pullErr},
+		upErrors:   map[string][]error{"up-fails": {upErr}},
 	}
 
 	result, err := New(backend).Run(context.Background())
@@ -113,11 +114,11 @@ func TestRunIsolatesAndAggregatesProjectFailures(t *testing.T) {
 
 	wantCalls := []string{
 		"discover",
-		"load:load-fails",
-		"load:session-fails",
-		"load:pull-fails", "pull:pull-fails",
-		"load:up-fails", "pull:up-fails", "up:up-fails",
-		"load:succeeds", "pull:succeeds", "up:succeeds",
+		"open:load-fails",
+		"open:session-fails",
+		"open:pull-fails", "pull:pull-fails",
+		"open:up-fails", "pull:up-fails", "up:up-fails",
+		"open:succeeds", "pull:succeeds", "up:succeeds",
 		"prune",
 	}
 	if !reflect.DeepEqual(backend.calls, wantCalls) {
@@ -128,48 +129,70 @@ func TestRunIsolatesAndAggregatesProjectFailures(t *testing.T) {
 	}) {
 		t.Fatalf("statuses = %v", got)
 	}
-	if !result.Pruned {
-		t.Fatal("successful pulls should cause one final prune")
+	if !result.Pruned || countCalls(backend.calls, "prune") != 1 {
+		t.Fatal("pull attempts should cause exactly one final prune")
 	}
 }
 
-func TestRunDoesNotPruneWhenEveryPullFails(t *testing.T) {
+func TestRunPrunesOnceWhenEveryPullFails(t *testing.T) {
 	t.Parallel()
 
-	pullErr := errors.New("pull failed")
+	firstPullErr := errors.New("first pull failed")
+	secondPullErr := errors.New("second pull failed")
 	backend := &fakeBackend{
-		projects:   []ProjectRef{{Name: "app", Services: []string{"web"}}},
-		pullErrors: map[string]error{"app": pullErr},
+		projects: []ProjectRef{
+			{Name: "first", Services: []string{"web"}},
+			{Name: "second", Services: []string{"worker"}},
+		},
+		pullErrors: map[string]error{
+			"first":  firstPullErr,
+			"second": secondPullErr,
+		},
 	}
 
 	result, err := New(backend).Run(context.Background())
-	if !errors.Is(err, pullErr) {
-		t.Fatalf("Run() error = %v, want pull error", err)
+	for _, target := range []error{firstPullErr, secondPullErr} {
+		if !errors.Is(err, target) {
+			t.Errorf("Run() error = %v, want errors.Is(_, %v)", err, target)
+		}
 	}
-	if result.PruneAttempted {
-		t.Fatal("prune should not be attempted without a successful pull")
+	if !result.PruneAttempted || !result.Pruned {
+		t.Fatalf("prune result = attempted:%v pruned:%v", result.PruneAttempted, result.Pruned)
 	}
-	if got := backend.calls[len(backend.calls)-1]; got == "prune" {
-		t.Fatal("unexpected prune call")
+	wantCalls := []string{
+		"discover",
+		"open:first", "pull:first",
+		"open:second", "pull:second",
+		"prune",
+	}
+	if !reflect.DeepEqual(backend.calls, wantCalls) {
+		t.Fatalf("calls = %v, want %v", backend.calls, wantCalls)
 	}
 }
 
-func TestRunReturnsPruneFailure(t *testing.T) {
+func TestRunJoinsPullAndPruneFailures(t *testing.T) {
 	t.Parallel()
 
+	pullErr := errors.New("pull failed")
 	pruneErr := errors.New("prune failed")
 	backend := &fakeBackend{
-		projects: []ProjectRef{{Name: "app", Services: []string{"web"}}},
-		pruneErr: pruneErr,
+		projects:   []ProjectRef{{Name: "app", Services: []string{"web"}}},
+		pullErrors: map[string]error{"app": pullErr},
+		pruneErr:   pruneErr,
 	}
 	reporter := &recordingReporter{}
 
 	result, err := New(backend, reporter).Run(context.Background())
-	if !errors.Is(err, pruneErr) {
-		t.Fatalf("Run() error = %v, want prune error", err)
+	for _, target := range []error{pullErr, pruneErr} {
+		if !errors.Is(err, target) {
+			t.Errorf("Run() error = %v, want errors.Is(_, %v)", err, target)
+		}
 	}
 	if !result.PruneAttempted || result.Pruned {
 		t.Fatalf("prune result = attempted:%v pruned:%v", result.PruneAttempted, result.Pruned)
+	}
+	if !reflect.DeepEqual(backend.calls, []string{"discover", "open:app", "pull:app", "prune"}) {
+		t.Fatalf("calls = %v", backend.calls)
 	}
 	if got := reporter.events[len(reporter.events)-1]; got != "prune:finish:error" {
 		t.Fatalf("last reporter event = %q", got)
@@ -237,7 +260,7 @@ func TestRunStopsSchedulingAndSkipsPruneAfterCancellation(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run() error = %v, want context cancellation", err)
 	}
-	wantCalls := []string{"discover", "load:first", "pull:first", "up:first"}
+	wantCalls := []string{"discover", "open:first", "pull:first", "up:first"}
 	if !reflect.DeepEqual(backend.calls, wantCalls) {
 		t.Fatalf("calls = %v, want %v", backend.calls, wantCalls)
 	}
@@ -260,7 +283,7 @@ func TestRunStopsWhenBackendOperationObservesCancellation(t *testing.T) {
 				backend.pullErrors = map[string]error{"first": context.Canceled}
 				backend.afterPull = func(string) { cancel() }
 			},
-			wantCalls: []string{"discover", "load:first", "pull:first"},
+			wantCalls: []string{"discover", "open:first", "pull:first"},
 		},
 		{
 			name: "during up",
@@ -268,7 +291,7 @@ func TestRunStopsWhenBackendOperationObservesCancellation(t *testing.T) {
 				backend.upErrors = map[string][]error{"first": {context.Canceled}}
 				backend.afterUp = func(string) { cancel() }
 			},
-			wantCalls: []string{"discover", "load:first", "pull:first", "up:first"},
+			wantCalls: []string{"discover", "open:first", "pull:first", "up:first"},
 		},
 	}
 
@@ -297,16 +320,15 @@ func TestRunStopsWhenBackendOperationObservesCancellation(t *testing.T) {
 }
 
 type fakeBackend struct {
-	projects      []ProjectRef
-	discoverErr   error
-	loadErrors    map[string]error
-	sessionErrors map[string]error
-	pullErrors    map[string]error
-	upErrors      map[string][]error
-	pruneErr      error
-	afterPull     func(string)
-	afterUp       func(string)
-	calls         []string
+	projects    []ProjectRef
+	discoverErr error
+	openErrors  map[string]error
+	pullErrors  map[string]error
+	upErrors    map[string][]error
+	pruneErr    error
+	afterPull   func(string)
+	afterUp     func(string)
+	calls       []string
 }
 
 type recordingReporter struct {
@@ -338,43 +360,36 @@ func (f *fakeBackend) DiscoverProjects(context.Context) ([]ProjectRef, error) {
 	return f.projects, f.discoverErr
 }
 
-func (f *fakeBackend) LoadProject(_ context.Context, ref ProjectRef) (*types.Project, error) {
-	f.calls = append(f.calls, "load:"+ref.Name)
-	if err := f.loadErrors[ref.Name]; err != nil {
+func (f *fakeBackend) OpenProject(_ context.Context, ref ProjectRef) (ProjectSession, error) {
+	f.calls = append(f.calls, "open:"+ref.Name)
+	if err := f.openErrors[ref.Name]; err != nil {
 		return nil, err
 	}
-	return &types.Project{Name: ref.Name}, nil
-}
-
-func (f *fakeBackend) NewProjectSession(project *types.Project) (ProjectSession, error) {
-	if err := f.sessionErrors[project.Name]; err != nil {
-		return nil, err
-	}
-	return fakeProjectSession{backend: f, project: project}, nil
+	return fakeProjectSession{backend: f, project: ref.Name}, nil
 }
 
 type fakeProjectSession struct {
 	backend *fakeBackend
-	project *types.Project
+	project string
 }
 
 func (s fakeProjectSession) Pull(context.Context) error {
-	s.backend.calls = append(s.backend.calls, "pull:"+s.project.Name)
+	s.backend.calls = append(s.backend.calls, "pull:"+s.project)
 	if s.backend.afterPull != nil {
-		s.backend.afterPull(s.project.Name)
+		s.backend.afterPull(s.project)
 	}
-	return s.backend.pullErrors[s.project.Name]
+	return s.backend.pullErrors[s.project]
 }
 
 func (s fakeProjectSession) Up(context.Context) error {
-	s.backend.calls = append(s.backend.calls, "up:"+s.project.Name)
+	s.backend.calls = append(s.backend.calls, "up:"+s.project)
 	var err error
-	if sequence := s.backend.upErrors[s.project.Name]; len(sequence) > 0 {
+	if sequence := s.backend.upErrors[s.project]; len(sequence) > 0 {
 		err = sequence[0]
-		s.backend.upErrors[s.project.Name] = sequence[1:]
+		s.backend.upErrors[s.project] = sequence[1:]
 	}
 	if s.backend.afterUp != nil {
-		s.backend.afterUp(s.project.Name)
+		s.backend.afterUp(s.project)
 	}
 	return err
 }

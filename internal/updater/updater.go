@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-
-	"github.com/compose-spec/compose-go/v2/types"
 )
 
 // ProjectRef contains the launch metadata needed to reconstruct a running
@@ -31,8 +29,7 @@ func (p ProjectRef) Eligible() bool {
 // Unit tests implement this interface without constructing a Docker client.
 type Backend interface {
 	DiscoverProjects(context.Context) ([]ProjectRef, error)
-	LoadProject(context.Context, ProjectRef) (*types.Project, error)
-	NewProjectSession(*types.Project) (ProjectSession, error)
+	OpenProject(context.Context, ProjectRef) (ProjectSession, error)
 	PruneImages(context.Context) error
 }
 
@@ -117,24 +114,18 @@ func (u *Updater) Run(ctx context.Context) (RunResult, error) {
 			continue
 		}
 
-		project, err := u.backend.LoadProject(ctx, ref)
+		session, err := u.backend.OpenProject(ctx, ref)
 		if err != nil {
-			projectResult.Err = fmt.Errorf("project %q: load: %w", ref.Name, err)
+			projectResult.Err = fmt.Errorf("project %q: open: %w", ref.Name, err)
 			projectResult.Status = ProjectFailed
 			u.finishProject(&result, projectResult)
 			runErrors = append(runErrors, projectResult.Err)
 			continue
 		}
 
-		session, err := u.backend.NewProjectSession(project)
-		if err != nil {
-			projectResult.Err = fmt.Errorf("project %q: create progress session: %w", ref.Name, err)
-			projectResult.Status = ProjectFailed
-			u.finishProject(&result, projectResult)
-			runErrors = append(runErrors, projectResult.Err)
-			continue
-		}
-
+		// A pull may update some service images before another service fails.
+		// Conservatively schedule one final cleanup for every pull attempt.
+		needsPrune = true
 		if err := session.Pull(ctx); err != nil {
 			projectResult.Err = fmt.Errorf("project %q: pull: %w", ref.Name, err)
 			projectResult.Status = ProjectFailed
@@ -147,9 +138,6 @@ func (u *Updater) Run(ctx context.Context) (RunResult, error) {
 			continue
 		}
 
-		// A successful pull may have created unused image layers even if Up
-		// later fails. Cleanup remains a once-per-run operation.
-		needsPrune = true
 		if err := session.Up(ctx); err != nil {
 			projectResult.Err = fmt.Errorf("project %q: up: %w", ref.Name, err)
 			projectResult.Status = ProjectFailed

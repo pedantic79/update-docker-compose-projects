@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/compose-spec/compose-go/v2/types"
 	"github.com/pedantic79/update-docker-compose-projects/internal/updater"
 )
 
@@ -176,11 +175,7 @@ func (b *commandBackend) DiscoverProjects(context.Context) ([]updater.ProjectRef
 	return b.projects, b.discoverErr
 }
 
-func (b *commandBackend) LoadProject(_ context.Context, ref updater.ProjectRef) (*types.Project, error) {
-	return &types.Project{Name: ref.Name}, nil
-}
-
-func (b *commandBackend) NewProjectSession(*types.Project) (updater.ProjectSession, error) {
+func (b *commandBackend) OpenProject(context.Context, updater.ProjectRef) (updater.ProjectSession, error) {
 	return commandProjectSession{backend: b}, nil
 }
 

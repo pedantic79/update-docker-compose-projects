@@ -86,8 +86,22 @@ func (b *Backend) Context() string {
 	return b.context
 }
 
-func (b *Backend) LoadProject(ctx context.Context, ref updater.ProjectRef) (*types.Project, error) {
-	return b.compose.LoadProject(ctx, projectLoadOptions(ref))
+func (b *Backend) OpenProject(ctx context.Context, ref updater.ProjectRef) (updater.ProjectSession, error) {
+	project, err := b.compose.LoadProject(ctx, projectLoadOptions(ref))
+	if err != nil {
+		return nil, fmt.Errorf("load Compose project: %w", err)
+	}
+
+	project, err = project.WithSelectedServices(ref.Services, types.IgnoreDependencies)
+	if err != nil {
+		return nil, fmt.Errorf("select running services: %w", err)
+	}
+
+	service, err := b.composeForProject()
+	if err != nil {
+		return nil, err
+	}
+	return &projectSession{compose: service, project: project}, nil
 }
 
 func projectLoadOptions(ref updater.ProjectRef) api.ProjectLoadOptions {
@@ -98,14 +112,6 @@ func projectLoadOptions(ref updater.ProjectRef) api.ProjectLoadOptions {
 		EnvFiles:    append([]string(nil), ref.EnvFiles...),
 		Services:    append([]string(nil), ref.Services...),
 	}
-}
-
-func (b *Backend) NewProjectSession(project *types.Project) (updater.ProjectSession, error) {
-	service, err := b.composeForProject()
-	if err != nil {
-		return nil, err
-	}
-	return &projectSession{compose: service, project: project}, nil
 }
 
 func pullOptions() api.PullOptions {
