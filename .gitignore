@@ -1,3 +1,4 @@
 vendor
 update-docker-compose-projects
 .mapping.json
+coverage.out

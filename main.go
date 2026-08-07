@@ -2,64 +2,122 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
-	"strings"
+	"os/signal"
+	"syscall"
 
-	"github.com/docker/compose/v5/pkg/api"
-	"github.com/fatih/color"
-	"github.com/pedantic79/update-docker-compose-projects/dockerclient"
+	dockerbackend "github.com/pedantic79/update-docker-compose-projects/internal/docker"
+	"github.com/pedantic79/update-docker-compose-projects/internal/updater"
+	"golang.org/x/term"
 )
 
-func unwrap[T any](v T, err error) T {
-	if err != nil {
-		panic(err)
-	}
-	return v
+type backendCloser interface {
+	updater.Backend
+	Close() error
 }
 
+type backendFactory func() (backendCloser, error)
+
 func main() {
-	ctx := context.Background()
-	client := unwrap(dockerclient.New())
-	defer client.Close()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	code := runCommand(ctx, os.Stdout, os.Stderr, func() (backendCloser, error) {
+		return dockerbackend.New()
+	})
+	stop()
+	os.Exit(code)
+}
 
-	needsPrune := false
-	projectViews := unwrap(client.ServiceList(ctx, api.ListOptions{All: true}))
-	for i, projectView := range projectViews {
-		projectName := projectView.Name
-		if i > 0 {
-			fmt.Println()
-		}
-
-		fmt.Printf("Name:%s, Status:%v\n",
-			color.RedString(projectName),
-			color.BlueString(projectView.Status))
-
-		// only include running projects
-		if !strings.HasPrefix(projectView.Status, "running(") {
-			fmt.Fprintf(os.Stderr,
-				"skipping: %s (Status: %s)\n",
-				color.RedString(projectName),
-				color.BlueString(projectView.Status))
-			continue
-		}
-
-		// get project from projectView
-		// Get original image summary
-		// Do a pull on the images
-		project := unwrap(client.ServiceLoadProject(ctx, projectView))
-		images := unwrap(client.ServiceImages(ctx, projectName, api.ImagesOptions{}))
-		unwrap(client.ServicePull(ctx, project))
-
-		// If any of the images have been updated, then restart the project
-		needsRestart := unwrap(client.NeedsRestart(ctx, images))
-		if len(needsRestart) > 0 {
-			unwrap(client.ServiceUp(ctx, project, needsRestart))
-			needsPrune = true
-		}
+func runCommand(ctx context.Context, stdout, stderr io.Writer, factory backendFactory) int {
+	backend, err := factory()
+	if err != nil {
+		fmt.Fprintf(stderr, "initialize: %v\n", err)
+		return 1
 	}
 
-	if needsPrune {
-		_ = unwrap(client.ImagePrune(ctx))
+	reporter := newConsoleReporter(stdout, stderr)
+	_, runErr := updater.New(backend, reporter).Run(ctx)
+
+	closeErr := backend.Close()
+	if closeErr != nil {
+		closeErr = fmt.Errorf("close Docker client: %w", closeErr)
 	}
+	if err := errors.Join(runErr, closeErr); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	return 0
+}
+
+type consoleReporter struct {
+	stdout      io.Writer
+	stderr      io.Writer
+	started     bool
+	colorOutput bool
+}
+
+func newConsoleReporter(stdout, stderr io.Writer) *consoleReporter {
+	return &consoleReporter{
+		stdout:      stdout,
+		stderr:      stderr,
+		colorOutput: supportsColor(stdout),
+	}
+}
+
+func supportsColor(writer io.Writer) bool {
+	if os.Getenv("NO_COLOR") != "" || os.Getenv("TERM") == "dumb" {
+		return false
+	}
+	file, ok := writer.(*os.File)
+	return ok && term.IsTerminal(int(file.Fd()))
+}
+
+func (r *consoleReporter) ProjectStarted(project updater.ProjectRef) {
+	if r.started {
+		fmt.Fprintln(r.stdout)
+	}
+	r.started = true
+	status := project.Status
+	if status == "" {
+		status = "unknown"
+	}
+	fmt.Fprintf(
+		r.stdout,
+		"Name:%s, Status:%s\n",
+		r.colorize("31", project.Name),
+		r.colorize("34", status),
+	)
+}
+
+func (r *consoleReporter) ProjectFinished(project updater.ProjectResult) {
+	if project.Status == updater.ProjectSkipped {
+		fmt.Fprintf(
+			r.stderr,
+			"skipping %s: %s\n",
+			r.colorize("31", project.Name),
+			project.Reason,
+		)
+	}
+}
+
+func (r *consoleReporter) PruneStarted() {
+	if r.started {
+		fmt.Fprintln(r.stdout)
+	}
+	fmt.Fprintln(r.stdout, r.colorize("31", "Pruning images..."))
+}
+
+func (r *consoleReporter) PruneFinished(err error) {
+	if err == nil {
+		fmt.Fprintln(r.stdout, "Pruned unused images.")
+	}
+}
+
+func (r *consoleReporter) colorize(code, value string) string {
+	if !r.colorOutput {
+		return value
+	}
+	return "\x1b[" + code + "m" + value + "\x1b[0m"
 }
