@@ -17,9 +17,27 @@ _build-arch arch:
 clean:
     rm -f {{EXE}}
 
+fmt:
+    find . \( -path ./.git -o -path ./vendor \) -prune -o -type f -name '*.go' -exec gofmt -w {} +
+
+fmt-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    unformatted="$(find . \( -path ./.git -o -path ./vendor \) -prune -o -type f -name '*.go' -exec gofmt -l {} +)"
+    if [[ -n "$unformatted" ]]; then
+        echo "Go files need formatting:"
+        echo "$unformatted"
+        exit 1
+    fi
+
+lint:
+    golangci-lint run ./...
+
 test:
     go test -race ./...
 
 coverage:
     go test -covermode=atomic -coverprofile=coverage.out ./...
     go tool cover -func=coverage.out
+
+check: fmt-check lint test

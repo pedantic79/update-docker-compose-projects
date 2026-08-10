@@ -38,3 +38,18 @@ just coverage
 The unit tests cover the update workflow, failure aggregation, retries,
 cancellation, cleanup policy, Compose project metadata validation, typed
 running-service selection, and Docker adapter option construction.
+
+## Development checks
+
+Format Go code with:
+
+```sh
+just fmt
+```
+
+Run formatting enforcement, `golangci-lint`, and the race-enabled test suite
+with:
+
+```sh
+just check
+```

@@ -132,6 +132,25 @@ func TestSupportsColorHonorsNoColor(t *testing.T) {
 	}
 }
 
+func TestSupportsColorChecksFileDescriptor(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
+	t.Setenv("TERM", "xterm-256color")
+
+	file, err := os.CreateTemp(t.TempDir(), "output")
+	if err != nil {
+		t.Fatalf("create output file: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := file.Close(); err != nil {
+			t.Errorf("close output file: %v", err)
+		}
+	})
+
+	if supportsColor(file) {
+		t.Fatal("regular file should not enable color")
+	}
+}
+
 func TestRunCommandReportsRunAndCloseFailures(t *testing.T) {
 	t.Parallel()
 

@@ -16,6 +16,32 @@ import (
 	"github.com/pedantic79/update-docker-compose-projects/internal/updater"
 )
 
+func TestNewBuildsBackendWithoutConnectingToDaemon(t *testing.T) {
+	t.Setenv("DOCKER_CONFIG", t.TempDir())
+	t.Setenv("DOCKER_CONTEXT", "default")
+	t.Setenv("DOCKER_HOST", "unix:///nonexistent/docker.sock")
+
+	backend, err := New()
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := backend.Close(); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	})
+
+	if backend.compose == nil || backend.engine == nil || backend.newProjectCompose == nil {
+		t.Fatalf("New() returned incomplete backend: %#v", backend)
+	}
+	if backend.Context() != "default" {
+		t.Fatalf("Context() = %q, want default", backend.Context())
+	}
+	if _, err := backend.composeForProject(); err != nil {
+		t.Fatalf("composeForProject() error = %v", err)
+	}
+}
+
 func TestBackendForwardsTypedOptionsWithoutDocker(t *testing.T) {
 	t.Parallel()
 
@@ -314,6 +340,26 @@ func TestBackendReturnsProgressSessionCreationError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "create Compose progress session") {
 		t.Fatalf("OpenProject() error = %v, want operation context", err)
+	}
+}
+
+func TestBackendRejectsUnknownSelectedService(t *testing.T) {
+	t.Parallel()
+
+	backend := &Backend{
+		compose: &fakeCompose{loadResult: &types.Project{
+			Name:     "app",
+			Services: types.Services{"web": {Name: "web"}},
+		}},
+		engine: &fakeEngine{},
+	}
+
+	_, err := backend.OpenProject(context.Background(), updater.ProjectRef{
+		Name:     "app",
+		Services: []string{"missing"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "select running services") {
+		t.Fatalf("OpenProject() error = %v, want service-selection context", err)
 	}
 }
 
