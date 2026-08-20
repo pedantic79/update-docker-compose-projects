@@ -95,7 +95,8 @@ func TestConsoleReporterUsesColorForVisualHierarchy(t *testing.T) {
 	reporter := &consoleReporter{
 		stdout:      &stdout,
 		stderr:      &stderr,
-		colorOutput: true,
+		stdoutColor: true,
+		stderrColor: true,
 	}
 
 	reporter.ProjectStarted(updater.ProjectRef{Name: "app", Status: "running(1)"})
@@ -148,6 +149,36 @@ func TestSupportsColorChecksFileDescriptor(t *testing.T) {
 
 	if supportsColor(file) {
 		t.Fatal("regular file should not enable color")
+	}
+}
+
+func TestConsoleReporterStderrColorMismatch(t *testing.T) {
+	t.Parallel()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	reporter := &consoleReporter{
+		stdout:      &stdout,
+		stderr:      &stderr,
+		stdoutColor: true,
+		stderrColor: false,
+	}
+
+	reporter.ProjectStarted(updater.ProjectRef{Name: "app", Status: "running(1)"})
+	reporter.ProjectFinished(updater.ProjectResult{
+		Name:   "app",
+		Status: updater.ProjectSkipped,
+		Reason: "no running services",
+	})
+
+	if !strings.Contains(stdout.String(), "\x1b[31mapp\x1b[0m") {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+	if strings.Contains(stderr.String(), "\x1b[") {
+		t.Fatalf("redirected stderr contains ANSI escape codes: %q", stderr.String())
+	}
+	if stderr.String() != "skipping app: no running services\n" {
+		t.Fatalf("stderr = %q", stderr.String())
 	}
 }
 

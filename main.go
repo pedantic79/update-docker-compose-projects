@@ -55,14 +55,16 @@ type consoleReporter struct {
 	stdout      io.Writer
 	stderr      io.Writer
 	started     bool
-	colorOutput bool
+	stdoutColor bool
+	stderrColor bool
 }
 
 func newConsoleReporter(stdout, stderr io.Writer) *consoleReporter {
 	return &consoleReporter{
 		stdout:      stdout,
 		stderr:      stderr,
-		colorOutput: supportsColor(stdout),
+		stdoutColor: supportsColor(stdout),
+		stderrColor: supportsColor(stderr),
 	}
 }
 
@@ -86,8 +88,8 @@ func (r *consoleReporter) ProjectStarted(project updater.ProjectRef) {
 	fmt.Fprintf(
 		r.stdout,
 		"Name:%s, Status:%s\n",
-		r.colorize("31", project.Name),
-		r.colorize("34", status),
+		r.colorize(r.stdoutColor, "31", project.Name),
+		r.colorize(r.stdoutColor, "34", status),
 	)
 }
 
@@ -96,7 +98,7 @@ func (r *consoleReporter) ProjectFinished(project updater.ProjectResult) {
 		fmt.Fprintf(
 			r.stderr,
 			"skipping %s: %s\n",
-			r.colorize("31", project.Name),
+			r.colorize(r.stderrColor, "31", project.Name),
 			project.Reason,
 		)
 	}
@@ -106,7 +108,7 @@ func (r *consoleReporter) PruneStarted() {
 	if r.started {
 		fmt.Fprintln(r.stdout)
 	}
-	fmt.Fprintln(r.stdout, r.colorize("31", "Pruning images..."))
+	fmt.Fprintln(r.stdout, r.colorize(r.stdoutColor, "31", "Pruning images..."))
 }
 
 func (r *consoleReporter) PruneFinished(err error) {
@@ -115,8 +117,8 @@ func (r *consoleReporter) PruneFinished(err error) {
 	}
 }
 
-func (r *consoleReporter) colorize(code, value string) string {
-	if !r.colorOutput {
+func (r *consoleReporter) colorize(enabled bool, code, value string) string {
+	if !enabled {
 		return value
 	}
 	return "\x1b[" + code + "m" + value + "\x1b[0m"
