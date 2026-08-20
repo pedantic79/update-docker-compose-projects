@@ -45,5 +45,5 @@ Replace the condition `if needsPrune && ctx.Err() == nil` with an explicit check
 2. Run `go test ./internal/updater/...` to ensure all existing cancellation and pruning tests pass without regression.
 
 ## Action Items
-- [ ] Apply the proposed fix to the codebase.
-- [ ] Verify the fix using the acceptance plan.
+- [x] Apply the proposed fix to the codebase.
+- [x] Verify the fix using the acceptance plan.

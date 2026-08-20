@@ -269,6 +269,28 @@ func TestRunStopsSchedulingAndSkipsPruneAfterCancellation(t *testing.T) {
 	}
 }
 
+func TestRunReportsCancellationWhenPruneSkippedAfterConvergence(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	backend := &fakeBackend{
+		projects: []ProjectRef{{Name: "app", Services: []string{"web"}}},
+		afterUp:  func(string) { cancel() },
+	}
+
+	result, err := New(backend).Run(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v, want context cancellation", err)
+	}
+	wantCalls := []string{"discover", "open:app", "pull:app", "up:app"}
+	if !reflect.DeepEqual(backend.calls, wantCalls) {
+		t.Fatalf("calls = %v, want %v", backend.calls, wantCalls)
+	}
+	if result.PruneAttempted {
+		t.Fatal("canceled run should not begin pruning")
+	}
+}
+
 func TestRunStopsWhenBackendOperationObservesCancellation(t *testing.T) {
 	t.Parallel()
 

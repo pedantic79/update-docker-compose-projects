@@ -156,7 +156,9 @@ func (u *Updater) Run(ctx context.Context) (RunResult, error) {
 
 	// Do not begin another mutation after cancellation. A later invocation can
 	// perform cleanup using a live context.
-	if needsPrune && ctx.Err() == nil {
+	if err := ctx.Err(); err != nil {
+		runErrors = append(runErrors, err)
+	} else if needsPrune {
 		result.PruneAttempted = true
 		u.reporter.PruneStarted()
 		pruneErr := u.backend.PruneImages(ctx)
