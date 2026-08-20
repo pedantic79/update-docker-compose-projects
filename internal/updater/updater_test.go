@@ -341,6 +341,79 @@ func TestRunStopsWhenBackendOperationObservesCancellation(t *testing.T) {
 	}
 }
 
+func TestRunAggregatesObservedCancellationOnce(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		configure func(*fakeBackend, context.CancelFunc)
+		wantCalls []string
+	}{
+		{
+			name: "during open",
+			configure: func(backend *fakeBackend, cancel context.CancelFunc) {
+				backend.openErrors = map[string]error{"first": context.Canceled}
+				backend.afterOpen = func(string) { cancel() }
+			},
+			wantCalls: []string{"discover", "open:first"},
+		},
+		{
+			name: "during pull",
+			configure: func(backend *fakeBackend, cancel context.CancelFunc) {
+				backend.pullErrors = map[string]error{"first": context.Canceled}
+				backend.afterPull = func(string) { cancel() }
+			},
+			wantCalls: []string{"discover", "open:first", "pull:first"},
+		},
+		{
+			name: "during up",
+			configure: func(backend *fakeBackend, cancel context.CancelFunc) {
+				backend.upErrors = map[string][]error{"first": {context.Canceled}}
+				backend.afterUp = func(string) { cancel() }
+			},
+			wantCalls: []string{"discover", "open:first", "pull:first", "up:first"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			ctx, cancel := context.WithCancel(context.Background())
+			backend := &fakeBackend{projects: []ProjectRef{
+				{Name: "first", Services: []string{"web"}},
+				{Name: "second", Services: []string{"web"}},
+			}}
+			test.configure(backend, cancel)
+
+			result, err := New(backend).Run(ctx)
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("Run() error = %v, want cancellation", err)
+			}
+			if !reflect.DeepEqual(backend.calls, test.wantCalls) {
+				t.Fatalf("calls = %v, want %v", backend.calls, test.wantCalls)
+			}
+			if result.PruneAttempted {
+				t.Fatal("canceled run should not prune")
+			}
+			if len(result.Projects) != 1 {
+				t.Fatalf("project results = %d, want 1", len(result.Projects))
+			}
+
+			joined, ok := err.(interface{ Unwrap() []error })
+			if !ok {
+				t.Fatalf("Run() error type = %T, want joined error", err)
+			}
+			items := joined.Unwrap()
+			if len(items) != 1 {
+				t.Fatalf("joined errors = %v, want only the project error", items)
+			}
+			if items[0] != result.Projects[0].Err {
+				t.Fatalf("joined error = %v, want project error %v", items[0], result.Projects[0].Err)
+			}
+		})
+	}
+}
+
 type fakeBackend struct {
 	projects    []ProjectRef
 	discoverErr error
@@ -348,6 +421,7 @@ type fakeBackend struct {
 	pullErrors  map[string]error
 	upErrors    map[string][]error
 	pruneErr    error
+	afterOpen   func(string)
 	afterPull   func(string)
 	afterUp     func(string)
 	calls       []string
@@ -384,6 +458,9 @@ func (f *fakeBackend) DiscoverProjects(context.Context) ([]ProjectRef, error) {
 
 func (f *fakeBackend) OpenProject(_ context.Context, ref ProjectRef) (ProjectSession, error) {
 	f.calls = append(f.calls, "open:"+ref.Name)
+	if f.afterOpen != nil {
+		f.afterOpen(ref.Name)
+	}
 	if err := f.openErrors[ref.Name]; err != nil {
 		return nil, err
 	}

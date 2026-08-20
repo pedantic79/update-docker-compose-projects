@@ -120,6 +120,9 @@ func (u *Updater) Run(ctx context.Context) (RunResult, error) {
 			projectResult.Status = ProjectFailed
 			u.finishProject(&result, projectResult)
 			runErrors = append(runErrors, projectResult.Err)
+			if ctx.Err() != nil {
+				break
+			}
 			continue
 		}
 
@@ -132,7 +135,6 @@ func (u *Updater) Run(ctx context.Context) (RunResult, error) {
 			u.finishProject(&result, projectResult)
 			runErrors = append(runErrors, projectResult.Err)
 			if ctx.Err() != nil {
-				runErrors = append(runErrors, ctx.Err())
 				break
 			}
 			continue
@@ -144,7 +146,6 @@ func (u *Updater) Run(ctx context.Context) (RunResult, error) {
 			u.finishProject(&result, projectResult)
 			runErrors = append(runErrors, projectResult.Err)
 			if ctx.Err() != nil {
-				runErrors = append(runErrors, ctx.Err())
 				break
 			}
 			continue
@@ -157,7 +158,9 @@ func (u *Updater) Run(ctx context.Context) (RunResult, error) {
 	// Do not begin another mutation after cancellation. A later invocation can
 	// perform cleanup using a live context.
 	if err := ctx.Err(); err != nil {
-		runErrors = append(runErrors, err)
+		if !errors.Is(errors.Join(runErrors...), err) {
+			runErrors = append(runErrors, err)
+		}
 	} else if needsPrune {
 		result.PruneAttempted = true
 		u.reporter.PruneStarted()

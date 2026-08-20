@@ -56,5 +56,5 @@ In `internal/updater/updater.go`:
    - Ensure cancellation behavior (halting further projects, skipping image pruning) remains completely intact.
 
 ## Action Items
-- [ ] Apply the proposed fix to the codebase.
-- [ ] Verify the fix using the acceptance plan.
+- [x] Apply the proposed fix to the codebase.
+- [x] Verify the fix using the acceptance plan.
