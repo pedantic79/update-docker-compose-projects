@@ -33,7 +33,9 @@ func main() {
 func runCommand(ctx context.Context, stdout, stderr io.Writer, factory backendFactory) int {
 	backend, err := factory()
 	if err != nil {
-		fmt.Fprintf(stderr, "initialize: %v\n", err)
+		if _, writeErr := fmt.Fprintf(stderr, "initialize: %v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 
@@ -44,8 +46,10 @@ func runCommand(ctx context.Context, stdout, stderr io.Writer, factory backendFa
 	if closeErr != nil {
 		closeErr = fmt.Errorf("close Docker client: %w", closeErr)
 	}
-	if err := errors.Join(runErr, closeErr); err != nil {
-		fmt.Fprintln(stderr, err)
+	if err := errors.Join(runErr, closeErr, reporter.err); err != nil {
+		if _, writeErr := fmt.Fprintln(stderr, err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 	return 0
@@ -57,6 +61,7 @@ type consoleReporter struct {
 	started     bool
 	stdoutColor bool
 	stderrColor bool
+	err         error
 }
 
 func newConsoleReporter(stdout, stderr io.Writer) *consoleReporter {
@@ -78,15 +83,16 @@ func supportsColor(writer io.Writer) bool {
 
 func (r *consoleReporter) ProjectStarted(project updater.ProjectRef) {
 	if r.started {
-		fmt.Fprintln(r.stdout)
+		r.writef(r.stdout, "stdout", "\n")
 	}
 	r.started = true
 	status := project.Status
 	if status == "" {
 		status = "unknown"
 	}
-	fmt.Fprintf(
+	r.writef(
 		r.stdout,
+		"stdout",
 		"Name:%s, Status:%s\n",
 		r.colorize(r.stdoutColor, "31", project.Name),
 		r.colorize(r.stdoutColor, "34", status),
@@ -95,8 +101,9 @@ func (r *consoleReporter) ProjectStarted(project updater.ProjectRef) {
 
 func (r *consoleReporter) ProjectFinished(project updater.ProjectResult) {
 	if project.Status == updater.ProjectSkipped {
-		fmt.Fprintf(
+		r.writef(
 			r.stderr,
+			"stderr",
 			"skipping %s: %s\n",
 			r.colorize(r.stderrColor, "31", project.Name),
 			project.Reason,
@@ -106,14 +113,20 @@ func (r *consoleReporter) ProjectFinished(project updater.ProjectResult) {
 
 func (r *consoleReporter) PruneStarted() {
 	if r.started {
-		fmt.Fprintln(r.stdout)
+		r.writef(r.stdout, "stdout", "\n")
 	}
-	fmt.Fprintln(r.stdout, r.colorize(r.stdoutColor, "31", "Pruning images..."))
+	r.writef(r.stdout, "stdout", "%s\n", r.colorize(r.stdoutColor, "31", "Pruning images..."))
 }
 
 func (r *consoleReporter) PruneFinished(err error) {
 	if err == nil {
-		fmt.Fprintln(r.stdout, "Pruned unused images.")
+		r.writef(r.stdout, "stdout", "Pruned unused images.\n")
+	}
+}
+
+func (r *consoleReporter) writef(writer io.Writer, destination, format string, args ...any) {
+	if _, err := fmt.Fprintf(writer, format, args...); err != nil && r.err == nil {
+		r.err = fmt.Errorf("write %s: %w", destination, err)
 	}
 }
 

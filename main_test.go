@@ -87,6 +87,30 @@ func TestRunCommandReportsInitializationFailure(t *testing.T) {
 	}
 }
 
+func TestRunCommandReportsOutputFailure(t *testing.T) {
+	t.Parallel()
+
+	writeErr := errors.New("broken pipe")
+	backend := &commandBackend{
+		projects: []updater.ProjectRef{{Name: "app", Status: "running(1)", Services: []string{"web"}}},
+	}
+	var stderr bytes.Buffer
+
+	code := runCommand(context.Background(), failingWriter{err: writeErr}, &stderr, func() (backendCloser, error) {
+		return backend, nil
+	})
+
+	if code != 1 {
+		t.Fatalf("runCommand() = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "write stdout: broken pipe") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+	if backend.closeCalls != 1 {
+		t.Fatalf("close calls = %d, want 1", backend.closeCalls)
+	}
+}
+
 func TestConsoleReporterUsesColorForVisualHierarchy(t *testing.T) {
 	t.Parallel()
 
@@ -219,6 +243,14 @@ type commandBackend struct {
 	pruneErr    error
 	closeErr    error
 	closeCalls  int
+}
+
+type failingWriter struct {
+	err error
+}
+
+func (w failingWriter) Write([]byte) (int, error) {
+	return 0, w.err
 }
 
 func (b *commandBackend) DiscoverProjects(context.Context) ([]updater.ProjectRef, error) {
