@@ -43,7 +43,7 @@ func (b *Backend) DiscoverProjects(ctx context.Context) ([]updater.ProjectRef, e
 
 func projectRefFromContainers(projectName string, containers []api.ContainerSummary) (updater.ProjectRef, error) {
 	ref := updater.ProjectRef{Name: projectName}
-	var metadata *projectMetadata
+	var baseline *containerMetadata
 	running := map[string]struct{}{}
 	stopped := map[string]struct{}{}
 	states := map[string]int{}
@@ -60,9 +60,9 @@ func projectRefFromContainers(projectName string, containers []api.ContainerSumm
 		if err != nil {
 			return updater.ProjectRef{}, err
 		}
-		if metadata == nil {
-			metadata = &current
-		} else if err := metadata.matches(projectName, summary.ID, current); err != nil {
+		if baseline == nil {
+			baseline = &current
+		} else if err := baseline.matchesProjectConfig(projectName, summary.ID, current); err != nil {
 			return updater.ProjectRef{}, err
 		}
 
@@ -80,10 +80,10 @@ func projectRefFromContainers(projectName string, containers []api.ContainerSumm
 		return ref, nil
 	}
 
-	ref.ConfigPaths = splitLabelList(metadata.configFiles)
+	ref.ConfigPaths = splitLabelList(baseline.configFiles)
 	ref.Status = formatStateCounts(states)
-	ref.WorkingDir = metadata.workingDir
-	ref.EnvFiles = splitLabelList(metadata.envFiles)
+	ref.WorkingDir = baseline.workingDir
+	ref.EnvFiles = splitLabelList(baseline.envFiles)
 	ref.Services = sortedKeys(running)
 	ref.StoppedServices = sortedKeys(stopped)
 	return ref, nil
@@ -103,15 +103,14 @@ func formatStateCounts(states map[string]int) string {
 	return strings.Join(parts, ", ")
 }
 
-type projectMetadata struct {
-	projectName string
+type containerMetadata struct {
 	configFiles string
 	workingDir  string
 	envFiles    string
 	service     string
 }
 
-func metadataFromContainer(projectName string, summary api.ContainerSummary) (projectMetadata, error) {
+func metadataFromContainer(projectName string, summary api.ContainerSummary) (containerMetadata, error) {
 	required := []string{
 		api.ProjectLabel,
 		api.ConfigFilesLabel,
@@ -120,7 +119,7 @@ func metadataFromContainer(projectName string, summary api.ContainerSummary) (pr
 	}
 	for _, label := range required {
 		if summary.Labels[label] == "" {
-			return projectMetadata{}, fmt.Errorf(
+			return containerMetadata{}, fmt.Errorf(
 				"project %q: container %q: missing label %q",
 				projectName,
 				summary.ID,
@@ -130,7 +129,7 @@ func metadataFromContainer(projectName string, summary api.ContainerSummary) (pr
 	}
 
 	if actual := summary.Labels[api.ProjectLabel]; actual != projectName {
-		return projectMetadata{}, fmt.Errorf(
+		return containerMetadata{}, fmt.Errorf(
 			"project %q: container %q: project label is %q",
 			projectName,
 			summary.ID,
@@ -138,8 +137,7 @@ func metadataFromContainer(projectName string, summary api.ContainerSummary) (pr
 		)
 	}
 
-	return projectMetadata{
-		projectName: summary.Labels[api.ProjectLabel],
+	return containerMetadata{
 		configFiles: summary.Labels[api.ConfigFilesLabel],
 		workingDir:  summary.Labels[api.WorkingDirLabel],
 		envFiles:    summary.Labels[api.EnvironmentFileLabel],
@@ -147,13 +145,16 @@ func metadataFromContainer(projectName string, summary api.ContainerSummary) (pr
 	}, nil
 }
 
-func (m projectMetadata) matches(projectName, containerID string, other projectMetadata) error {
+func (m containerMetadata) matchesProjectConfig(
+	projectName string,
+	containerID string,
+	other containerMetadata,
+) error {
 	checks := []struct {
 		label string
 		left  string
 		right string
 	}{
-		{api.ProjectLabel, m.projectName, other.projectName},
 		{api.ConfigFilesLabel, m.configFiles, other.configFiles},
 		{api.WorkingDirLabel, m.workingDir, other.workingDir},
 		{api.EnvironmentFileLabel, m.envFiles, other.envFiles},

@@ -121,7 +121,7 @@ The project-label validation remains concrete and unchanged:
 
 ## Action Items
 
-- [ ] Rename `projectMetadata` to `containerMetadata`.
-- [ ] Rename `matches` to `matchesProjectConfig`.
-- [ ] Remove redundant stored project-name state and comparison.
-- [ ] Complete the acceptance plan.
+- [x] Rename `projectMetadata` to `containerMetadata`.
+- [x] Rename `matches` to `matchesProjectConfig`.
+- [x] Remove redundant stored project-name state and comparison.
+- [x] Complete the acceptance plan.

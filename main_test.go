@@ -206,6 +206,29 @@ func TestConsoleReporterStderrColorMismatch(t *testing.T) {
 	}
 }
 
+func TestConsoleReporterReportsStderrWriteFailure(t *testing.T) {
+	t.Parallel()
+
+	writeErr := errors.New("broken pipe")
+	reporter := &consoleReporter{
+		stdout: &bytes.Buffer{},
+		stderr: failingWriter{err: writeErr},
+	}
+
+	reporter.ProjectFinished(updater.ProjectResult{
+		Name:   "stopped",
+		Status: updater.ProjectSkipped,
+		Reason: "no running services",
+	})
+
+	if !errors.Is(reporter.err, writeErr) {
+		t.Fatalf("reporter error = %v, want %v", reporter.err, writeErr)
+	}
+	if !strings.Contains(reporter.err.Error(), "write stderr") {
+		t.Fatalf("reporter error = %q, want stderr destination", reporter.err)
+	}
+}
+
 func TestRunCommandReportsRunAndCloseFailures(t *testing.T) {
 	t.Parallel()
 

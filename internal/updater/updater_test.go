@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -107,7 +108,7 @@ func TestRunIsolatesAndAggregatesProjectFailures(t *testing.T) {
 		}
 	}
 	for _, name := range []string{"load-fails", "session-fails", "pull-fails", "up-fails"} {
-		if !contains(err.Error(), "project \""+name+"\"") {
+		if !strings.Contains(err.Error(), "project \""+name+"\"") {
 			t.Errorf("Run() error %q does not identify project %q", err, name)
 		}
 	}
@@ -514,13 +515,4 @@ func countCalls(calls []string, target string) int {
 		}
 	}
 	return count
-}
-
-func contains(value, substring string) bool {
-	for i := 0; i+len(substring) <= len(value); i++ {
-		if value[i:i+len(substring)] == substring {
-			return true
-		}
-	}
-	return false
 }

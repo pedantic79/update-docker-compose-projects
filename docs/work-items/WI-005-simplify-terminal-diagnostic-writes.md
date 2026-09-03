@@ -65,6 +65,6 @@ func (r *consoleReporter) writef(writer io.Writer, destination, format string, a
 
 ## Action Items
 
-- [ ] Make terminal diagnostic writes explicitly best-effort.
-- [ ] Preserve reporter error capture and aggregation.
-- [ ] Complete the acceptance plan.
+- [x] Make terminal diagnostic writes explicitly best-effort.
+- [x] Preserve reporter error capture and aggregation.
+- [x] Complete the acceptance plan.

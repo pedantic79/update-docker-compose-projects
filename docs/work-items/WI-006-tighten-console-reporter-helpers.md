@@ -137,7 +137,7 @@ func TestConsoleReporterReportsStderrWriteFailure(t *testing.T) {
 
 ## Action Items
 
-- [ ] Add `outf` and `errf` wrappers.
-- [ ] Convert `colorize` to a pure package function and name its ANSI codes.
-- [ ] Add the focused failed-`stderr` test.
-- [ ] Complete the acceptance plan.
+- [x] Add `outf` and `errf` wrappers.
+- [x] Convert `colorize` to a pure package function and name its ANSI codes.
+- [x] Add the focused failed-`stderr` test.
+- [x] Complete the acceptance plan.

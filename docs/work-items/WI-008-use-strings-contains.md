@@ -51,7 +51,7 @@ Use the standard library directly and remove the helper.
 
 ## Action Items
 
-- [ ] Import `strings` in `internal/updater/updater_test.go`.
-- [ ] Replace the sole helper call with `strings.Contains`.
-- [ ] Delete the local `contains` helper.
-- [ ] Complete the acceptance plan.
+- [x] Import `strings` in `internal/updater/updater_test.go`.
+- [x] Replace the sole helper call with `strings.Contains`.
+- [x] Delete the local `contains` helper.
+- [x] Complete the acceptance plan.
