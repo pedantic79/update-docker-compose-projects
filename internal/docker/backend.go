@@ -7,7 +7,6 @@ import (
 	"github.com/compose-spec/compose-go/v2/types"
 	"github.com/docker/cli/cli/command"
 	"github.com/docker/cli/cli/flags"
-	"github.com/docker/compose/v5/cmd/display"
 	"github.com/docker/compose/v5/pkg/api"
 	"github.com/docker/compose/v5/pkg/compose"
 	"github.com/moby/moby/client"
@@ -69,14 +68,10 @@ func New() (*Backend, error) {
 			// Compose's full-screen event processor retains progress entries.
 			// Give each project a fresh processor so pull and up stay together
 			// without entries leaking into the next project.
-			// It also redraws headers without clearing shorter previous text;
-			// clear each rendered line so "pull" followed by "up" cannot leave
-			// a stale counter suffix visible in the terminal.
-			progressOutput := lineClearingWriter{out: dockerCLI.Err()}
-			ttyDisplay := display.Full(progressOutput, dockerCLI.Out(), false)
+			progressDisplay := projectEventProcessor(dockerCLI.Err(), dockerCLI.Out())
 			return compose.NewComposeService(
 				dockerCLI,
-				compose.WithEventProcessor(ttyDisplay),
+				compose.WithEventProcessor(progressDisplay),
 			)
 		},
 	}, nil

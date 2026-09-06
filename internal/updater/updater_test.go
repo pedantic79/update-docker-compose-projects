@@ -454,7 +454,7 @@ func TestRunHandlesReporterFailuresAtOperationBoundaries(t *testing.T) {
 	reportErr := errors.New("report failed")
 	tests := []struct {
 		name               string
-		failedEvent        string
+		failedEvents       []string
 		projects           []ProjectRef
 		wantCalls          []string
 		wantProjects       int
@@ -462,8 +462,8 @@ func TestRunHandlesReporterFailuresAtOperationBoundaries(t *testing.T) {
 		wantPruned         bool
 	}{
 		{
-			name:        "project start stops before mutation",
-			failedEvent: "start:first",
+			name:         "project start stops before mutation",
+			failedEvents: []string{"start:first"},
 			projects: []ProjectRef{
 				{Name: "first", Services: []string{"web"}},
 				{Name: "second", Services: []string{"worker"}},
@@ -471,8 +471,8 @@ func TestRunHandlesReporterFailuresAtOperationBoundaries(t *testing.T) {
 			wantCalls: []string{"discover"},
 		},
 		{
-			name:        "project finish stops new work but preserves cleanup",
-			failedEvent: "finish:first:converged",
+			name:         "project finish stops new work but preserves cleanup",
+			failedEvents: []string{"finish:first:converged"},
 			projects: []ProjectRef{
 				{Name: "first", Services: []string{"web"}},
 				{Name: "second", Services: []string{"worker"}},
@@ -483,8 +483,8 @@ func TestRunHandlesReporterFailuresAtOperationBoundaries(t *testing.T) {
 			wantPruned:         true,
 		},
 		{
-			name:        "skipped project finish stops before later mutation",
-			failedEvent: "finish:first:skipped",
+			name:         "skipped project finish stops before later mutation",
+			failedEvents: []string{"finish:first:skipped"},
 			projects: []ProjectRef{
 				{Name: "first"},
 				{Name: "second", Services: []string{"worker"}},
@@ -493,16 +493,34 @@ func TestRunHandlesReporterFailuresAtOperationBoundaries(t *testing.T) {
 			wantProjects: 1,
 		},
 		{
-			name:         "prune start stops before prune mutation",
-			failedEvent:  "prune:start",
-			projects:     []ProjectRef{{Name: "first", Services: []string{"web"}}},
-			wantCalls:    []string{"discover", "open:first", "pull:first", "up:first"},
-			wantProjects: 1,
+			name:               "prune start failure does not suppress cleanup",
+			failedEvents:       []string{"prune:start"},
+			projects:           []ProjectRef{{Name: "first", Services: []string{"web"}}},
+			wantCalls:          []string{"discover", "open:first", "pull:first", "up:first", "prune"},
+			wantProjects:       1,
+			wantPruneAttempted: true,
+			wantPruned:         true,
 		},
 		{
 			name:               "prune finish reports after completed cleanup",
-			failedEvent:        "prune:finish:ok",
+			failedEvents:       []string{"prune:finish:ok"},
 			projects:           []ProjectRef{{Name: "first", Services: []string{"web"}}},
+			wantCalls:          []string{"discover", "open:first", "pull:first", "up:first", "prune"},
+			wantProjects:       1,
+			wantPruneAttempted: true,
+			wantPruned:         true,
+		},
+		{
+			name: "persistent reporter failure does not suppress cleanup",
+			failedEvents: []string{
+				"start:second",
+				"prune:start",
+				"prune:finish:ok",
+			},
+			projects: []ProjectRef{
+				{Name: "first", Services: []string{"web"}},
+				{Name: "second", Services: []string{"worker"}},
+			},
 			wantCalls:          []string{"discover", "open:first", "pull:first", "up:first", "prune"},
 			wantProjects:       1,
 			wantPruneAttempted: true,
@@ -515,7 +533,11 @@ func TestRunHandlesReporterFailuresAtOperationBoundaries(t *testing.T) {
 			t.Parallel()
 
 			backend := &fakeBackend{projects: test.projects}
-			reporter := &recordingReporter{failures: map[string]error{test.failedEvent: reportErr}}
+			failures := make(map[string]error, len(test.failedEvents))
+			for _, event := range test.failedEvents {
+				failures[event] = reportErr
+			}
+			reporter := &recordingReporter{failures: failures}
 
 			result, err := New(backend, reporter).Run(context.Background())
 			if !errors.Is(err, reportErr) {

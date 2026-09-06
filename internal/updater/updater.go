@@ -40,9 +40,9 @@ type ProjectSession interface {
 	Up(context.Context) error
 }
 
-// Reporter receives lifecycle events synchronously. Start-event failures
-// prevent the announced operation; other failures stop new project work and
-// are aggregated with any required cleanup errors.
+// Reporter receives lifecycle events synchronously. A ProjectStarted failure
+// prevents new project work. Prune notifications cannot suppress cleanup that
+// is already required by an attempted pull.
 type Reporter interface {
 	ProjectStarted(ProjectRef) error
 	ProjectFinished(ProjectResult) error
@@ -153,17 +153,17 @@ func (u *Updater) Run(ctx context.Context) (RunResult, error) {
 	} else if needsPrune {
 		if err := u.reporter.PruneStarted(); err != nil {
 			runErrors = append(runErrors, fmt.Errorf("report prune started: %w", err))
+		}
+
+		result.PruneAttempted = true
+		pruneErr := u.backend.PruneImages(ctx)
+		if err := u.reporter.PruneFinished(pruneErr); err != nil {
+			runErrors = append(runErrors, fmt.Errorf("report prune finished: %w", err))
+		}
+		if pruneErr != nil {
+			runErrors = append(runErrors, fmt.Errorf("prune images: %w", pruneErr))
 		} else {
-			result.PruneAttempted = true
-			pruneErr := u.backend.PruneImages(ctx)
-			if err := u.reporter.PruneFinished(pruneErr); err != nil {
-				runErrors = append(runErrors, fmt.Errorf("report prune finished: %w", err))
-			}
-			if pruneErr != nil {
-				runErrors = append(runErrors, fmt.Errorf("prune images: %w", pruneErr))
-			} else {
-				result.Pruned = true
-			}
+			result.Pruned = true
 		}
 	}
 

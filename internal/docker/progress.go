@@ -3,9 +3,28 @@ package docker
 import (
 	"bytes"
 	"io"
+	"os"
+
+	"github.com/docker/compose/v5/cmd/display"
+	"github.com/docker/compose/v5/pkg/api"
 )
 
 const eraseToEndOfLine = "\x1b[K"
+
+type terminalWriter interface {
+	io.Writer
+	IsTerminal() bool
+}
+
+func projectEventProcessor(out terminalWriter, info io.Writer) api.EventProcessor {
+	if !out.IsTerminal() || os.Getenv("NO_COLOR") != "" || os.Getenv("TERM") == "dumb" {
+		return display.Plain(out)
+	}
+
+	// Compose redraws headers without clearing shorter previous text. Clear each
+	// rendered line so "pull" followed by "up" cannot leave a stale suffix.
+	return display.Full(lineClearingWriter{out: out}, info, false)
+}
 
 // lineClearingWriter prevents stale characters from surviving when Compose
 // redraws a terminal line with shorter content.

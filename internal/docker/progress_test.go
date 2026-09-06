@@ -5,7 +5,61 @@ import (
 	"errors"
 	"io"
 	"testing"
+
+	"github.com/docker/cli/cli/streams"
+	"github.com/docker/compose/v5/pkg/api"
 )
+
+func TestProjectEventProcessorUsesPlainOutputWhenANSIIsUnavailable(t *testing.T) {
+	tests := []struct {
+		name     string
+		terminal bool
+		noColor  string
+		term     string
+	}{
+		{name: "redirected output", term: "xterm-256color"},
+		{name: "NO_COLOR", terminal: true, noColor: "1", term: "xterm-256color"},
+		{name: "dumb terminal", terminal: true, term: "dumb"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("NO_COLOR", test.noColor)
+			t.Setenv("TERM", test.term)
+
+			var output bytes.Buffer
+			out := streams.NewOut(&output)
+			out.SetIsTerminal(test.terminal)
+			projectEventProcessor(out, io.Discard).On(api.Resource{
+				ID:     "Image app",
+				Text:   "Pulled",
+				Status: api.Done,
+			})
+
+			if bytes.Contains(output.Bytes(), []byte("\x1b")) {
+				t.Fatalf("plain progress contains ANSI escapes: %q", output.String())
+			}
+		})
+	}
+}
+
+func TestProjectEventProcessorClearsCompletedTerminalLines(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
+	t.Setenv("TERM", "xterm-256color")
+
+	var output bytes.Buffer
+	out := streams.NewOut(&output)
+	out.SetIsTerminal(true)
+	projectEventProcessor(out, io.Discard).On(api.Resource{
+		ID:     "Image app",
+		Text:   "Pulled",
+		Status: api.Done,
+	})
+
+	if !bytes.Contains(output.Bytes(), []byte(eraseToEndOfLine)) {
+		t.Fatalf("terminal progress does not clear completed line: %q", output.String())
+	}
+}
 
 func TestLineClearingWriterClearsEveryCompletedLine(t *testing.T) {
 	t.Parallel()
