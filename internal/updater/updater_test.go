@@ -60,6 +60,39 @@ func TestRunConvergesEligibleProjectsAndSkipsStoppedProjects(t *testing.T) {
 	}
 }
 
+func TestRunCompletesEachProjectBeforeStartingTheNext(t *testing.T) {
+	t.Parallel()
+
+	var events []string
+	backend := &fakeBackend{
+		projects: []ProjectRef{
+			{Name: "first", Services: []string{"web"}},
+			{Name: "second", Services: []string{"worker"}},
+		},
+		lifecycleEvents: &events,
+	}
+	reporter := &recordingReporter{lifecycleEvents: &events}
+
+	result, err := New(backend, reporter).Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got := statuses(result.Projects); !reflect.DeepEqual(got, []ProjectStatus{
+		ProjectConverged, ProjectConverged,
+	}) {
+		t.Fatalf("statuses = %v", got)
+	}
+
+	wantEvents := []string{
+		"start:first", "open:first", "pull:first", "up:first", "finish:first:converged",
+		"start:second", "open:second", "pull:second", "up:second", "finish:second:converged",
+		"prune:start", "prune", "prune:finish:ok",
+	}
+	if !reflect.DeepEqual(events, wantEvents) {
+		t.Fatalf("lifecycle events = %v, want %v", events, wantEvents)
+	}
+}
+
 func TestRunDiscoveryFailureIsFatalBeforeMutation(t *testing.T) {
 	t.Parallel()
 
@@ -416,32 +449,34 @@ func TestRunAggregatesObservedCancellationOnce(t *testing.T) {
 }
 
 type fakeBackend struct {
-	projects    []ProjectRef
-	discoverErr error
-	openErrors  map[string]error
-	pullErrors  map[string]error
-	upErrors    map[string][]error
-	pruneErr    error
-	afterOpen   func(string)
-	afterPull   func(string)
-	afterUp     func(string)
-	calls       []string
+	projects        []ProjectRef
+	discoverErr     error
+	openErrors      map[string]error
+	pullErrors      map[string]error
+	upErrors        map[string][]error
+	pruneErr        error
+	afterOpen       func(string)
+	afterPull       func(string)
+	afterUp         func(string)
+	calls           []string
+	lifecycleEvents *[]string
 }
 
 type recordingReporter struct {
-	events []string
+	events          []string
+	lifecycleEvents *[]string
 }
 
 func (r *recordingReporter) ProjectStarted(project ProjectRef) {
-	r.events = append(r.events, "start:"+project.Name)
+	r.record("start:" + project.Name)
 }
 
 func (r *recordingReporter) ProjectFinished(project ProjectResult) {
-	r.events = append(r.events, "finish:"+project.Name+":"+string(project.Status))
+	r.record("finish:" + project.Name + ":" + string(project.Status))
 }
 
 func (r *recordingReporter) PruneStarted() {
-	r.events = append(r.events, "prune:start")
+	r.record("prune:start")
 }
 
 func (r *recordingReporter) PruneFinished(err error) {
@@ -449,16 +484,23 @@ func (r *recordingReporter) PruneFinished(err error) {
 	if err != nil {
 		status = "error"
 	}
-	r.events = append(r.events, "prune:finish:"+status)
+	r.record("prune:finish:" + status)
+}
+
+func (r *recordingReporter) record(event string) {
+	r.events = append(r.events, event)
+	if r.lifecycleEvents != nil {
+		*r.lifecycleEvents = append(*r.lifecycleEvents, event)
+	}
 }
 
 func (f *fakeBackend) DiscoverProjects(context.Context) ([]ProjectRef, error) {
-	f.calls = append(f.calls, "discover")
+	f.recordCall("discover")
 	return f.projects, f.discoverErr
 }
 
 func (f *fakeBackend) OpenProject(_ context.Context, ref ProjectRef) (ProjectSession, error) {
-	f.calls = append(f.calls, "open:"+ref.Name)
+	f.recordCall("open:" + ref.Name)
 	if f.afterOpen != nil {
 		f.afterOpen(ref.Name)
 	}
@@ -474,7 +516,7 @@ type fakeProjectSession struct {
 }
 
 func (s fakeProjectSession) Pull(context.Context) error {
-	s.backend.calls = append(s.backend.calls, "pull:"+s.project)
+	s.backend.recordCall("pull:" + s.project)
 	if s.backend.afterPull != nil {
 		s.backend.afterPull(s.project)
 	}
@@ -482,7 +524,7 @@ func (s fakeProjectSession) Pull(context.Context) error {
 }
 
 func (s fakeProjectSession) Up(context.Context) error {
-	s.backend.calls = append(s.backend.calls, "up:"+s.project)
+	s.backend.recordCall("up:" + s.project)
 	var err error
 	if sequence := s.backend.upErrors[s.project]; len(sequence) > 0 {
 		err = sequence[0]
@@ -495,8 +537,15 @@ func (s fakeProjectSession) Up(context.Context) error {
 }
 
 func (f *fakeBackend) PruneImages(context.Context) error {
-	f.calls = append(f.calls, "prune")
+	f.recordCall("prune")
 	return f.pruneErr
+}
+
+func (f *fakeBackend) recordCall(call string) {
+	f.calls = append(f.calls, call)
+	if f.lifecycleEvents != nil && call != "discover" {
+		*f.lifecycleEvents = append(*f.lifecycleEvents, call)
+	}
 }
 
 func statuses(results []ProjectResult) []ProjectStatus {

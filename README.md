@@ -18,7 +18,7 @@ starts with a fresh renderer.
 Project names and statuses are colored when output is connected to a terminal;
 redirected output and environments using `NO_COLOR` remain plain text.
 This output contract and its rationale are recorded in
-[ADR 0001](docs/adr/0001-project-scoped-progress-output.md).
+[ADR 0001](docs/adr/adr-0001-project-scoped-progress-output.md).
 
 ## Tests
 

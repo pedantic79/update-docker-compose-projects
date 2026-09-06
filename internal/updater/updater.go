@@ -114,45 +114,25 @@ func (u *Updater) Run(ctx context.Context) (RunResult, error) {
 			continue
 		}
 
-		session, err := u.backend.OpenProject(ctx, ref)
-		if err != nil {
-			projectResult.Err = fmt.Errorf("project %q: open: %w", ref.Name, err)
-			projectResult.Status = ProjectFailed
-			u.finishProject(&result, projectResult)
-			runErrors = append(runErrors, projectResult.Err)
-			if ctx.Err() != nil {
-				break
-			}
-			continue
+		pullAttempted, projectErr := u.convergeProject(ctx, ref)
+		if pullAttempted {
+			// A pull may update some service images before another service fails.
+			// Conservatively schedule one final cleanup for every pull attempt.
+			needsPrune = true
 		}
 
-		// A pull may update some service images before another service fails.
-		// Conservatively schedule one final cleanup for every pull attempt.
-		needsPrune = true
-		if err := session.Pull(ctx); err != nil {
-			projectResult.Err = fmt.Errorf("project %q: pull: %w", ref.Name, err)
+		if projectErr != nil {
 			projectResult.Status = ProjectFailed
-			u.finishProject(&result, projectResult)
+			projectResult.Err = fmt.Errorf("project %q: %w", ref.Name, projectErr)
 			runErrors = append(runErrors, projectResult.Err)
-			if ctx.Err() != nil {
-				break
-			}
-			continue
+		} else {
+			projectResult.Status = ProjectConverged
 		}
-
-		if err := session.Up(ctx); err != nil {
-			projectResult.Err = fmt.Errorf("project %q: up: %w", ref.Name, err)
-			projectResult.Status = ProjectFailed
-			u.finishProject(&result, projectResult)
-			runErrors = append(runErrors, projectResult.Err)
-			if ctx.Err() != nil {
-				break
-			}
-			continue
-		}
-
-		projectResult.Status = ProjectConverged
 		u.finishProject(&result, projectResult)
+
+		if ctx.Err() != nil {
+			break
+		}
 	}
 
 	// Do not begin another mutation after cancellation. A later invocation can
@@ -174,6 +154,26 @@ func (u *Updater) Run(ctx context.Context) (RunResult, error) {
 	}
 
 	return result, errors.Join(runErrors...)
+}
+
+func (u *Updater) convergeProject(
+	ctx context.Context,
+	ref ProjectRef,
+) (pullAttempted bool, err error) {
+	session, err := u.backend.OpenProject(ctx, ref)
+	if err != nil {
+		return false, fmt.Errorf("open: %w", err)
+	}
+
+	if err := session.Pull(ctx); err != nil {
+		return true, fmt.Errorf("pull: %w", err)
+	}
+
+	if err := session.Up(ctx); err != nil {
+		return true, fmt.Errorf("up: %w", err)
+	}
+
+	return true, nil
 }
 
 func (u *Updater) finishProject(result *RunResult, project ProjectResult) {
