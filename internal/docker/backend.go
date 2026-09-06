@@ -69,7 +69,11 @@ func New() (*Backend, error) {
 			// Compose's full-screen event processor retains progress entries.
 			// Give each project a fresh processor so pull and up stay together
 			// without entries leaking into the next project.
-			ttyDisplay := display.Full(dockerCLI.Err(), dockerCLI.Out(), false)
+			// It also redraws headers without clearing shorter previous text;
+			// clear each rendered line so "pull" followed by "up" cannot leave
+			// a stale counter suffix visible in the terminal.
+			progressOutput := lineClearingWriter{out: dockerCLI.Err()}
+			ttyDisplay := display.Full(progressOutput, dockerCLI.Out(), false)
 			return compose.NewComposeService(
 				dockerCLI,
 				compose.WithEventProcessor(ttyDisplay),
