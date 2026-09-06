@@ -109,6 +109,9 @@ func TestRunCommandReportsOutputFailure(t *testing.T) {
 	if backend.closeCalls != 1 {
 		t.Fatalf("close calls = %d, want 1", backend.closeCalls)
 	}
+	if backend.openCalls != 0 {
+		t.Fatalf("open calls = %d, want none after project-heading failure", backend.openCalls)
+	}
 }
 
 func TestConsoleReporterUsesColorForVisualHierarchy(t *testing.T) {
@@ -123,14 +126,22 @@ func TestConsoleReporterUsesColorForVisualHierarchy(t *testing.T) {
 		stderrColor: true,
 	}
 
-	reporter.ProjectStarted(updater.ProjectRef{Name: "app", Status: "running(1)"})
-	reporter.ProjectFinished(updater.ProjectResult{
+	if err := reporter.ProjectStarted(updater.ProjectRef{Name: "app", Status: "running(1)"}); err != nil {
+		t.Fatalf("ProjectStarted() error = %v", err)
+	}
+	if err := reporter.ProjectFinished(updater.ProjectResult{
 		Name:   "app",
 		Status: updater.ProjectSkipped,
 		Reason: "no running services",
-	})
-	reporter.PruneStarted()
-	reporter.PruneFinished(nil)
+	}); err != nil {
+		t.Fatalf("ProjectFinished() error = %v", err)
+	}
+	if err := reporter.PruneStarted(); err != nil {
+		t.Fatalf("PruneStarted() error = %v", err)
+	}
+	if err := reporter.PruneFinished(nil); err != nil {
+		t.Fatalf("PruneFinished() error = %v", err)
+	}
 
 	for _, sequence := range []string{
 		"\x1b[31mapp\x1b[0m",
@@ -188,12 +199,16 @@ func TestConsoleReporterStderrColorMismatch(t *testing.T) {
 		stderrColor: false,
 	}
 
-	reporter.ProjectStarted(updater.ProjectRef{Name: "app", Status: "running(1)"})
-	reporter.ProjectFinished(updater.ProjectResult{
+	if err := reporter.ProjectStarted(updater.ProjectRef{Name: "app", Status: "running(1)"}); err != nil {
+		t.Fatalf("ProjectStarted() error = %v", err)
+	}
+	if err := reporter.ProjectFinished(updater.ProjectResult{
 		Name:   "app",
 		Status: updater.ProjectSkipped,
 		Reason: "no running services",
-	})
+	}); err != nil {
+		t.Fatalf("ProjectFinished() error = %v", err)
+	}
 
 	if !strings.Contains(stdout.String(), "\x1b[31mapp\x1b[0m") {
 		t.Fatalf("stdout = %q", stdout.String())
@@ -215,17 +230,54 @@ func TestConsoleReporterReportsStderrWriteFailure(t *testing.T) {
 		stderr: failingWriter{err: writeErr},
 	}
 
-	reporter.ProjectFinished(updater.ProjectResult{
+	err := reporter.ProjectFinished(updater.ProjectResult{
 		Name:   "stopped",
 		Status: updater.ProjectSkipped,
 		Reason: "no running services",
 	})
 
-	if !errors.Is(reporter.err, writeErr) {
-		t.Fatalf("reporter error = %v, want %v", reporter.err, writeErr)
+	if !errors.Is(err, writeErr) {
+		t.Fatalf("ProjectFinished() error = %v, want %v", err, writeErr)
 	}
-	if !strings.Contains(reporter.err.Error(), "write stderr") {
-		t.Fatalf("reporter error = %q, want stderr destination", reporter.err)
+	if !strings.Contains(err.Error(), "write stderr") {
+		t.Fatalf("ProjectFinished() error = %q, want stderr destination", err)
+	}
+}
+
+func TestConsoleReporterReturnsSeparatorWriteFailures(t *testing.T) {
+	t.Parallel()
+
+	writeErr := errors.New("broken pipe")
+	tests := []struct {
+		name   string
+		report func(*consoleReporter) error
+	}{
+		{
+			name: "project separator",
+			report: func(reporter *consoleReporter) error {
+				return reporter.ProjectStarted(updater.ProjectRef{Name: "next"})
+			},
+		},
+		{
+			name: "prune separator",
+			report: func(reporter *consoleReporter) error {
+				return reporter.PruneStarted()
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			reporter := &consoleReporter{
+				stdout:  failingWriter{err: writeErr},
+				started: true,
+			}
+			if err := test.report(reporter); !errors.Is(err, writeErr) {
+				t.Fatalf("report error = %v, want %v", err, writeErr)
+			}
+		})
 	}
 }
 
@@ -266,6 +318,7 @@ type commandBackend struct {
 	pruneErr    error
 	closeErr    error
 	closeCalls  int
+	openCalls   int
 }
 
 type failingWriter struct {
@@ -281,6 +334,7 @@ func (b *commandBackend) DiscoverProjects(context.Context) ([]updater.ProjectRef
 }
 
 func (b *commandBackend) OpenProject(context.Context, updater.ProjectRef) (updater.ProjectSession, error) {
+	b.openCalls++
 	return commandProjectSession{backend: b}, nil
 }
 

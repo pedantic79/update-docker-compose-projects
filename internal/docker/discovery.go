@@ -45,16 +45,16 @@ func projectRefFromContainers(projectName string, containers []api.ContainerSumm
 	ref := updater.ProjectRef{Name: projectName}
 	var baseline *containerMetadata
 	running := map[string]struct{}{}
-	stopped := map[string]struct{}{}
 	states := map[string]int{}
-	nonOneOff := 0
 
 	for _, summary := range containers {
 		if strings.EqualFold(summary.Labels[api.OneoffLabel], "true") {
 			continue
 		}
-		nonOneOff++
 		states[string(summary.State)]++
+		if summary.State != container.StateRunning {
+			continue
+		}
 
 		current, err := metadataFromContainer(projectName, summary)
 		if err != nil {
@@ -66,26 +66,20 @@ func projectRefFromContainers(projectName string, containers []api.ContainerSumm
 			return updater.ProjectRef{}, err
 		}
 
-		if summary.State == container.StateRunning {
-			running[current.service] = struct{}{}
-			delete(stopped, current.service)
-		} else if _, isRunning := running[current.service]; !isRunning {
-			stopped[current.service] = struct{}{}
-		}
+		running[current.service] = struct{}{}
 	}
 
-	// A project containing only one-off containers is not eligible, but it is
-	// still a valid discovery result and can be reported as skipped.
-	if nonOneOff == 0 {
+	ref.Status = formatStateCounts(states)
+	// Projects without running containers are valid discovery results, but they
+	// do not need launch metadata because the updater will report them as skipped.
+	if baseline == nil {
 		return ref, nil
 	}
 
 	ref.ConfigPaths = splitLabelList(baseline.configFiles)
-	ref.Status = formatStateCounts(states)
 	ref.WorkingDir = baseline.workingDir
 	ref.EnvFiles = splitLabelList(baseline.envFiles)
 	ref.Services = sortedKeys(running)
-	ref.StoppedServices = sortedKeys(stopped)
 	return ref, nil
 }
 

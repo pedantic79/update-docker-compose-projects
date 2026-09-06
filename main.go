@@ -44,7 +44,7 @@ func runCommand(ctx context.Context, stdout, stderr io.Writer, factory backendFa
 	if closeErr != nil {
 		closeErr = fmt.Errorf("close Docker client: %w", closeErr)
 	}
-	if err := errors.Join(runErr, closeErr, reporter.err); err != nil {
+	if err := errors.Join(runErr, closeErr); err != nil {
 		_, _ = fmt.Fprintln(stderr, err)
 		return 1
 	}
@@ -62,7 +62,6 @@ type consoleReporter struct {
 	started     bool
 	stdoutColor bool
 	stderrColor bool
-	err         error
 }
 
 func newConsoleReporter(stdout, stderr io.Writer) *consoleReporter {
@@ -82,57 +81,64 @@ func supportsColor(writer io.Writer) bool {
 	return ok && term.IsTerminal(int(file.Fd()))
 }
 
-func (r *consoleReporter) ProjectStarted(project updater.ProjectRef) {
+func (r *consoleReporter) ProjectStarted(project updater.ProjectRef) error {
 	if r.started {
-		r.outf("\n")
+		if err := r.outf("\n"); err != nil {
+			return err
+		}
 	}
 	r.started = true
 	status := project.Status
 	if status == "" {
 		status = "unknown"
 	}
-	r.outf(
+	return r.outf(
 		"Name:%s, Status:%s\n",
 		colorize(r.stdoutColor, ansiRed, project.Name),
 		colorize(r.stdoutColor, ansiBlue, status),
 	)
 }
 
-func (r *consoleReporter) ProjectFinished(project updater.ProjectResult) {
+func (r *consoleReporter) ProjectFinished(project updater.ProjectResult) error {
 	if project.Status == updater.ProjectSkipped {
-		r.errf(
+		return r.errf(
 			"skipping %s: %s\n",
 			colorize(r.stderrColor, ansiRed, project.Name),
 			project.Reason,
 		)
 	}
+	return nil
 }
 
-func (r *consoleReporter) PruneStarted() {
+func (r *consoleReporter) PruneStarted() error {
 	if r.started {
-		r.outf("\n")
+		if err := r.outf("\n"); err != nil {
+			return err
+		}
 	}
-	r.outf("%s\n", colorize(r.stdoutColor, ansiRed, "Pruning images..."))
+	return r.outf("%s\n", colorize(r.stdoutColor, ansiRed, "Pruning images..."))
 }
 
-func (r *consoleReporter) PruneFinished(err error) {
+func (r *consoleReporter) PruneFinished(err error) error {
 	if err == nil {
-		r.outf("Pruned unused images.\n")
+		return r.outf("Pruned unused images.\n")
 	}
+	return nil
 }
 
-func (r *consoleReporter) outf(format string, args ...any) {
-	r.writef(r.stdout, "stdout", format, args...)
+func (r *consoleReporter) outf(format string, args ...any) error {
+	return writef(r.stdout, "stdout", format, args...)
 }
 
-func (r *consoleReporter) errf(format string, args ...any) {
-	r.writef(r.stderr, "stderr", format, args...)
+func (r *consoleReporter) errf(format string, args ...any) error {
+	return writef(r.stderr, "stderr", format, args...)
 }
 
-func (r *consoleReporter) writef(writer io.Writer, destination, format string, args ...any) {
-	if _, err := fmt.Fprintf(writer, format, args...); err != nil && r.err == nil {
-		r.err = fmt.Errorf("write %s: %w", destination, err)
+func writef(writer io.Writer, destination, format string, args ...any) error {
+	if _, err := fmt.Fprintf(writer, format, args...); err != nil {
+		return fmt.Errorf("write %s: %w", destination, err)
 	}
+	return nil
 }
 
 func colorize(enabled bool, code, value string) string {

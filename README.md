@@ -8,7 +8,7 @@ Updates the currently running services in Docker Compose projects:
 3. Pulls images for the running services.
 4. Runs Compose convergence so only services whose image or configuration
    diverged are recreated.
-5. Prunes unused images once after at least one successful pull.
+5. Prunes unused images once after at least one pull attempt.
 
 Failures are isolated by project. The updater attempts the remaining projects,
 performs final cleanup when appropriate, and exits nonzero with all errors.

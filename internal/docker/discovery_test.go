@@ -39,13 +39,12 @@ func TestProjectRefFromContainersPreservesMetadataAndTypedState(t *testing.T) {
 		t.Fatalf("projectRefFromContainers() error = %v", err)
 	}
 	want := updater.ProjectRef{
-		Name:            "billing",
-		Status:          "exited(1), paused(1), running(1)",
-		ConfigPaths:     []string{"/srv/base.yml", "/srv/prod.yml"},
-		WorkingDir:      "/srv/billing",
-		EnvFiles:        []string{"/srv/common.env", "/srv/prod.env"},
-		Services:        []string{"web"},
-		StoppedServices: []string{"worker"},
+		Name:        "billing",
+		Status:      "exited(1), paused(1), running(1)",
+		ConfigPaths: []string{"/srv/base.yml", "/srv/prod.yml"},
+		WorkingDir:  "/srv/billing",
+		EnvFiles:    []string{"/srv/common.env", "/srv/prod.env"},
+		Services:    []string{"web"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("project ref = %#v, want %#v", got, want)
@@ -65,6 +64,51 @@ func TestProjectRefFromContainersOnlyOneOffIsSkipped(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, updater.ProjectRef{Name: "tools"}) {
 		t.Fatalf("project ref = %#v", got)
+	}
+}
+
+func TestProjectRefFromContainersUsesOnlyRunningContainerMetadata(t *testing.T) {
+	t.Parallel()
+
+	running := composeContainer("web-1", "app", "web", container.StateRunning)
+	runningWorker := composeContainer("worker-2", "app", "worker", container.StateRunning)
+	stopped := composeContainer("worker-1", "app", "worker", container.StateExited)
+	stopped.Labels[api.ConfigFilesLabel] = "/stale/compose.yml"
+	delete(stopped.Labels, api.WorkingDirLabel)
+	delete(stopped.Labels, api.ServiceLabel)
+
+	got, err := projectRefFromContainers("app", []api.ContainerSummary{stopped, running, runningWorker})
+	if err != nil {
+		t.Fatalf("projectRefFromContainers() error = %v", err)
+	}
+	want := updater.ProjectRef{
+		Name:        "app",
+		Status:      "exited(1), running(2)",
+		ConfigPaths: []string{"/srv/app/compose.yml"},
+		WorkingDir:  "/srv/app",
+		Services:    []string{"web", "worker"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("project ref = %#v, want %#v", got, want)
+	}
+}
+
+func TestProjectRefFromContainersSkipsStoppedProjectWithoutMetadata(t *testing.T) {
+	t.Parallel()
+
+	stopped := api.ContainerSummary{
+		ID:     "old-worker",
+		Labels: map[string]string{api.OneoffLabel: "False"},
+		State:  container.StateExited,
+	}
+
+	got, err := projectRefFromContainers("app", []api.ContainerSummary{stopped})
+	if err != nil {
+		t.Fatalf("projectRefFromContainers() error = %v", err)
+	}
+	want := updater.ProjectRef{Name: "app", Status: "exited(1)"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("project ref = %#v, want %#v", got, want)
 	}
 }
 

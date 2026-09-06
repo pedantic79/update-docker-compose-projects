@@ -24,7 +24,7 @@ func TestRunConvergesEligibleProjectsAndSkipsStoppedProjects(t *testing.T) {
 	t.Parallel()
 
 	backend := &fakeBackend{projects: []ProjectRef{
-		{Name: "stopped", StoppedServices: []string{"worker"}},
+		{Name: "stopped"},
 		{Name: "running", Services: []string{"web"}},
 	}}
 	reporter := &recordingReporter{}
@@ -99,7 +99,7 @@ func TestRunDiscoveryFailureIsFatalBeforeMutation(t *testing.T) {
 	discoverErr := errors.New("daemon unavailable")
 	backend := &fakeBackend{discoverErr: discoverErr}
 
-	result, err := New(backend).Run(context.Background())
+	result, err := New(backend, nil).Run(context.Background())
 	if !errors.Is(err, discoverErr) {
 		t.Fatalf("Run() error = %v, want discover error", err)
 	}
@@ -134,7 +134,7 @@ func TestRunIsolatesAndAggregatesProjectFailures(t *testing.T) {
 		upErrors:   map[string][]error{"up-fails": {upErr}},
 	}
 
-	result, err := New(backend).Run(context.Background())
+	result, err := New(backend, nil).Run(context.Background())
 	for _, target := range []error{loadErr, sessionErr, pullErr, upErr} {
 		if !errors.Is(err, target) {
 			t.Errorf("Run() error = %v, want errors.Is(_, %v)", err, target)
@@ -184,7 +184,7 @@ func TestRunPrunesOnceWhenEveryPullFails(t *testing.T) {
 		},
 	}
 
-	result, err := New(backend).Run(context.Background())
+	result, err := New(backend, nil).Run(context.Background())
 	for _, target := range []error{firstPullErr, secondPullErr} {
 		if !errors.Is(err, target) {
 			t.Errorf("Run() error = %v, want errors.Is(_, %v)", err, target)
@@ -241,7 +241,7 @@ func TestRunRetriesConvergenceAfterUpFailure(t *testing.T) {
 		projects: []ProjectRef{{Name: "app", Services: []string{"web"}}},
 		upErrors: map[string][]error{"app": {firstUpErr, nil}},
 	}
-	service := New(backend)
+	service := New(backend, nil)
 
 	if _, err := service.Run(context.Background()); !errors.Is(err, firstUpErr) {
 		t.Fatalf("first Run() error = %v, want up error", err)
@@ -262,7 +262,7 @@ func TestRunHonorsCancellationBeforeDiscovery(t *testing.T) {
 	cancel()
 	backend := &fakeBackend{}
 
-	result, err := New(backend).Run(ctx)
+	result, err := New(backend, nil).Run(ctx)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run() error = %v, want context cancellation", err)
 	}
@@ -290,7 +290,7 @@ func TestRunStopsSchedulingAndSkipsPruneAfterCancellation(t *testing.T) {
 		}
 	}
 
-	result, err := New(backend).Run(ctx)
+	result, err := New(backend, nil).Run(ctx)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run() error = %v, want context cancellation", err)
 	}
@@ -312,7 +312,7 @@ func TestRunReportsCancellationWhenPruneSkippedAfterConvergence(t *testing.T) {
 		afterUp:  func(string) { cancel() },
 	}
 
-	result, err := New(backend).Run(ctx)
+	result, err := New(backend, nil).Run(ctx)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run() error = %v, want context cancellation", err)
 	}
@@ -361,7 +361,7 @@ func TestRunStopsWhenBackendOperationObservesCancellation(t *testing.T) {
 			}}
 			test.configure(backend, cancel)
 
-			result, err := New(backend).Run(ctx)
+			result, err := New(backend, nil).Run(ctx)
 			if !errors.Is(err, context.Canceled) {
 				t.Fatalf("Run() error = %v, want cancellation", err)
 			}
@@ -419,7 +419,7 @@ func TestRunAggregatesObservedCancellationOnce(t *testing.T) {
 			}}
 			test.configure(backend, cancel)
 
-			result, err := New(backend).Run(ctx)
+			result, err := New(backend, nil).Run(ctx)
 			if !errors.Is(err, context.Canceled) {
 				t.Fatalf("Run() error = %v, want cancellation", err)
 			}
@@ -448,6 +448,98 @@ func TestRunAggregatesObservedCancellationOnce(t *testing.T) {
 	}
 }
 
+func TestRunHandlesReporterFailuresAtOperationBoundaries(t *testing.T) {
+	t.Parallel()
+
+	reportErr := errors.New("report failed")
+	tests := []struct {
+		name               string
+		failedEvent        string
+		projects           []ProjectRef
+		wantCalls          []string
+		wantProjects       int
+		wantPruneAttempted bool
+		wantPruned         bool
+	}{
+		{
+			name:        "project start stops before mutation",
+			failedEvent: "start:first",
+			projects: []ProjectRef{
+				{Name: "first", Services: []string{"web"}},
+				{Name: "second", Services: []string{"worker"}},
+			},
+			wantCalls: []string{"discover"},
+		},
+		{
+			name:        "project finish stops new work but preserves cleanup",
+			failedEvent: "finish:first:converged",
+			projects: []ProjectRef{
+				{Name: "first", Services: []string{"web"}},
+				{Name: "second", Services: []string{"worker"}},
+			},
+			wantCalls:          []string{"discover", "open:first", "pull:first", "up:first", "prune"},
+			wantProjects:       1,
+			wantPruneAttempted: true,
+			wantPruned:         true,
+		},
+		{
+			name:        "skipped project finish stops before later mutation",
+			failedEvent: "finish:first:skipped",
+			projects: []ProjectRef{
+				{Name: "first"},
+				{Name: "second", Services: []string{"worker"}},
+			},
+			wantCalls:    []string{"discover"},
+			wantProjects: 1,
+		},
+		{
+			name:         "prune start stops before prune mutation",
+			failedEvent:  "prune:start",
+			projects:     []ProjectRef{{Name: "first", Services: []string{"web"}}},
+			wantCalls:    []string{"discover", "open:first", "pull:first", "up:first"},
+			wantProjects: 1,
+		},
+		{
+			name:               "prune finish reports after completed cleanup",
+			failedEvent:        "prune:finish:ok",
+			projects:           []ProjectRef{{Name: "first", Services: []string{"web"}}},
+			wantCalls:          []string{"discover", "open:first", "pull:first", "up:first", "prune"},
+			wantProjects:       1,
+			wantPruneAttempted: true,
+			wantPruned:         true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			backend := &fakeBackend{projects: test.projects}
+			reporter := &recordingReporter{failures: map[string]error{test.failedEvent: reportErr}}
+
+			result, err := New(backend, reporter).Run(context.Background())
+			if !errors.Is(err, reportErr) {
+				t.Fatalf("Run() error = %v, want reporter error", err)
+			}
+			if !reflect.DeepEqual(backend.calls, test.wantCalls) {
+				t.Fatalf("calls = %v, want %v", backend.calls, test.wantCalls)
+			}
+			if len(result.Projects) != test.wantProjects {
+				t.Fatalf("project results = %d, want %d", len(result.Projects), test.wantProjects)
+			}
+			if result.PruneAttempted != test.wantPruneAttempted || result.Pruned != test.wantPruned {
+				t.Fatalf(
+					"prune result = attempted:%v pruned:%v, want attempted:%v pruned:%v",
+					result.PruneAttempted,
+					result.Pruned,
+					test.wantPruneAttempted,
+					test.wantPruned,
+				)
+			}
+		})
+	}
+}
+
 type fakeBackend struct {
 	projects        []ProjectRef
 	discoverErr     error
@@ -465,33 +557,35 @@ type fakeBackend struct {
 type recordingReporter struct {
 	events          []string
 	lifecycleEvents *[]string
+	failures        map[string]error
 }
 
-func (r *recordingReporter) ProjectStarted(project ProjectRef) {
-	r.record("start:" + project.Name)
+func (r *recordingReporter) ProjectStarted(project ProjectRef) error {
+	return r.record("start:" + project.Name)
 }
 
-func (r *recordingReporter) ProjectFinished(project ProjectResult) {
-	r.record("finish:" + project.Name + ":" + string(project.Status))
+func (r *recordingReporter) ProjectFinished(project ProjectResult) error {
+	return r.record("finish:" + project.Name + ":" + string(project.Status))
 }
 
-func (r *recordingReporter) PruneStarted() {
-	r.record("prune:start")
+func (r *recordingReporter) PruneStarted() error {
+	return r.record("prune:start")
 }
 
-func (r *recordingReporter) PruneFinished(err error) {
+func (r *recordingReporter) PruneFinished(err error) error {
 	status := "ok"
 	if err != nil {
 		status = "error"
 	}
-	r.record("prune:finish:" + status)
+	return r.record("prune:finish:" + status)
 }
 
-func (r *recordingReporter) record(event string) {
+func (r *recordingReporter) record(event string) error {
 	r.events = append(r.events, event)
 	if r.lifecycleEvents != nil {
 		*r.lifecycleEvents = append(*r.lifecycleEvents, event)
 	}
+	return r.failures[event]
 }
 
 func (f *fakeBackend) DiscoverProjects(context.Context) ([]ProjectRef, error) {

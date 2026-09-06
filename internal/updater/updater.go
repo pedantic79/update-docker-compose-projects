@@ -6,17 +6,16 @@ import (
 	"fmt"
 )
 
-// ProjectRef contains the launch metadata needed to reconstruct a running
-// Compose project. Status is display-only; eligibility uses typed service
-// state captured during discovery.
+// ProjectRef contains display state and, for eligible projects, the launch
+// metadata needed to reconstruct their running services. Status is
+// display-only; eligibility uses typed service state captured during discovery.
 type ProjectRef struct {
-	Name            string
-	Status          string
-	ConfigPaths     []string
-	WorkingDir      string
-	EnvFiles        []string
-	Services        []string
-	StoppedServices []string
+	Name        string
+	Status      string
+	ConfigPaths []string
+	WorkingDir  string
+	EnvFiles    []string
+	Services    []string
 }
 
 // Eligible reports whether the project has at least one running service to
@@ -41,13 +40,14 @@ type ProjectSession interface {
 	Up(context.Context) error
 }
 
-// Reporter receives lifecycle events synchronously. A console reporter can
-// therefore print a project header before Docker emits progress for it.
+// Reporter receives lifecycle events synchronously. Start-event failures
+// prevent the announced operation; other failures stop new project work and
+// are aggregated with any required cleanup errors.
 type Reporter interface {
-	ProjectStarted(ProjectRef)
-	ProjectFinished(ProjectResult)
-	PruneStarted()
-	PruneFinished(error)
+	ProjectStarted(ProjectRef) error
+	ProjectFinished(ProjectResult) error
+	PruneStarted() error
+	PruneFinished(error) error
 }
 
 type ProjectStatus string
@@ -76,10 +76,9 @@ type Updater struct {
 	reporter Reporter
 }
 
-func New(backend Backend, reporters ...Reporter) *Updater {
-	reporter := Reporter(discardReporter{})
-	if len(reporters) > 0 && reporters[0] != nil {
-		reporter = reporters[0]
+func New(backend Backend, reporter Reporter) *Updater {
+	if reporter == nil {
+		reporter = discardReporter{}
 	}
 	return &Updater{backend: backend, reporter: reporter}
 }
@@ -105,12 +104,19 @@ func (u *Updater) Run(ctx context.Context) (RunResult, error) {
 			break
 		}
 
+		if err := u.reporter.ProjectStarted(ref); err != nil {
+			runErrors = append(runErrors, fmt.Errorf("report project %q started: %w", ref.Name, err))
+			break
+		}
+
 		projectResult := ProjectResult{Name: ref.Name}
-		u.reporter.ProjectStarted(ref)
 		if !ref.Eligible() {
 			projectResult.Status = ProjectSkipped
 			projectResult.Reason = "no running services"
-			u.finishProject(&result, projectResult)
+			if err := u.finishProject(&result, projectResult); err != nil {
+				runErrors = append(runErrors, err)
+				break
+			}
 			continue
 		}
 
@@ -128,7 +134,10 @@ func (u *Updater) Run(ctx context.Context) (RunResult, error) {
 		} else {
 			projectResult.Status = ProjectConverged
 		}
-		u.finishProject(&result, projectResult)
+		if err := u.finishProject(&result, projectResult); err != nil {
+			runErrors = append(runErrors, err)
+			break
+		}
 
 		if ctx.Err() != nil {
 			break
@@ -142,14 +151,19 @@ func (u *Updater) Run(ctx context.Context) (RunResult, error) {
 			runErrors = append(runErrors, err)
 		}
 	} else if needsPrune {
-		result.PruneAttempted = true
-		u.reporter.PruneStarted()
-		pruneErr := u.backend.PruneImages(ctx)
-		u.reporter.PruneFinished(pruneErr)
-		if pruneErr != nil {
-			runErrors = append(runErrors, fmt.Errorf("prune images: %w", pruneErr))
+		if err := u.reporter.PruneStarted(); err != nil {
+			runErrors = append(runErrors, fmt.Errorf("report prune started: %w", err))
 		} else {
-			result.Pruned = true
+			result.PruneAttempted = true
+			pruneErr := u.backend.PruneImages(ctx)
+			if err := u.reporter.PruneFinished(pruneErr); err != nil {
+				runErrors = append(runErrors, fmt.Errorf("report prune finished: %w", err))
+			}
+			if pruneErr != nil {
+				runErrors = append(runErrors, fmt.Errorf("prune images: %w", pruneErr))
+			} else {
+				result.Pruned = true
+			}
 		}
 	}
 
@@ -176,14 +190,17 @@ func (u *Updater) convergeProject(
 	return true, nil
 }
 
-func (u *Updater) finishProject(result *RunResult, project ProjectResult) {
+func (u *Updater) finishProject(result *RunResult, project ProjectResult) error {
 	result.Projects = append(result.Projects, project)
-	u.reporter.ProjectFinished(project)
+	if err := u.reporter.ProjectFinished(project); err != nil {
+		return fmt.Errorf("report project %q finished: %w", project.Name, err)
+	}
+	return nil
 }
 
 type discardReporter struct{}
 
-func (discardReporter) ProjectStarted(ProjectRef)     {}
-func (discardReporter) ProjectFinished(ProjectResult) {}
-func (discardReporter) PruneStarted()                 {}
-func (discardReporter) PruneFinished(error)           {}
+func (discardReporter) ProjectStarted(ProjectRef) error     { return nil }
+func (discardReporter) ProjectFinished(ProjectResult) error { return nil }
+func (discardReporter) PruneStarted() error                 { return nil }
+func (discardReporter) PruneFinished(error) error           { return nil }
