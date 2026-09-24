@@ -181,6 +181,9 @@ func TestBackendLoadsSelectedProfiledServiceWithoutItsStoppedDependency(t *testi
     profiles: [debug]
     depends_on:
       - db
+  worker:
+    image: busybox
+    profiles: [debug]
 `)
 	if err := os.WriteFile(configPath, config, 0o600); err != nil {
 		t.Fatalf("write Compose config: %v", err)

@@ -61,6 +61,24 @@ func TestProjectEventProcessorClearsCompletedTerminalLines(t *testing.T) {
 	}
 }
 
+func TestProjectEventProcessorKeepsTerminalProgressScopedToProject(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
+	t.Setenv("TERM", "xterm-256color")
+
+	var output bytes.Buffer
+	out := streams.NewOut(&output)
+	out.SetIsTerminal(true)
+	first := projectEventProcessor(out, io.Discard)
+	first.On(api.Resource{ID: "Image first", Text: "Pulled", Status: api.Done})
+
+	output.Reset()
+	second := projectEventProcessor(out, io.Discard)
+	second.On(api.Resource{ID: "Image second", Text: "Pulled", Status: api.Done})
+	if !bytes.Contains(output.Bytes(), []byte("second")) || bytes.Contains(output.Bytes(), []byte("first")) {
+		t.Fatalf("second project progress includes stale first project: %q", output.String())
+	}
+}
+
 func TestLineClearingWriterClearsEveryCompletedLine(t *testing.T) {
 	t.Parallel()
 
