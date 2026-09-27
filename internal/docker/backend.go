@@ -3,6 +3,7 @@ package docker
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/compose-spec/compose-go/v2/types"
 	"github.com/docker/cli/cli/command"
@@ -106,10 +107,10 @@ func (b *Backend) OpenProject(ctx context.Context, ref updater.ProjectRef) (upda
 func projectLoadOptions(ref updater.ProjectRef) api.ProjectLoadOptions {
 	return api.ProjectLoadOptions{
 		ProjectName: ref.Name,
-		ConfigPaths: append([]string(nil), ref.ConfigPaths...),
+		ConfigPaths: slices.Clone(ref.ConfigPaths),
 		WorkingDir:  ref.WorkingDir,
-		EnvFiles:    append([]string(nil), ref.EnvFiles...),
-		Services:    append([]string(nil), ref.Services...),
+		EnvFiles:    slices.Clone(ref.EnvFiles),
+		Services:    slices.Clone(ref.Services),
 	}
 }
 

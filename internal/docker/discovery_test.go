@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -23,6 +24,8 @@ func TestProjectRefFromContainersPreservesMetadataAndTypedState(t *testing.T) {
 	webRunningReplica := composeContainer("web-2", "billing", "web", container.StateRunning)
 	webRunningReplica.Labels[api.ConfigFilesLabel] = web.Labels[api.ConfigFilesLabel]
 	webRunningReplica.Labels[api.EnvironmentFileLabel] = web.Labels[api.EnvironmentFileLabel]
+	secondWebRunningReplica := webRunningReplica
+	secondWebRunningReplica.ID = "web-3"
 	worker := composeContainer("worker-1", "billing", "worker", container.StatePaused)
 	worker.Labels[api.ConfigFilesLabel] = web.Labels[api.ConfigFilesLabel]
 	worker.Labels[api.EnvironmentFileLabel] = web.Labels[api.EnvironmentFileLabel]
@@ -33,14 +36,14 @@ func TestProjectRefFromContainersPreservesMetadataAndTypedState(t *testing.T) {
 	}
 
 	got, err := projectRefFromContainers("billing", []api.ContainerSummary{
-		worker, oneOff, web, webRunningReplica,
+		worker, oneOff, web, webRunningReplica, secondWebRunningReplica,
 	})
 	if err != nil {
 		t.Fatalf("projectRefFromContainers() error = %v", err)
 	}
 	want := updater.ProjectRef{
 		Name:        "billing",
-		Status:      "exited(1), paused(1), running(1)",
+		Status:      "exited(1), paused(1), running(2)",
 		ConfigPaths: []string{"/srv/base.yml", "/srv/prod.yml"},
 		WorkingDir:  "/srv/billing",
 		EnvFiles:    []string{"/srv/common.env", "/srv/prod.env"},
@@ -184,7 +187,7 @@ func TestDiscoverProjectsUsesTypedContainersAndSortsResults(t *testing.T) {
 	}
 	backend := &Backend{compose: compose, engine: &fakeEngine{}}
 
-	got, err := backend.DiscoverProjects(context.Background())
+	got, err := backend.DiscoverProjects(t.Context())
 	if err != nil {
 		t.Fatalf("DiscoverProjects() error = %v", err)
 	}
@@ -196,7 +199,7 @@ func TestDiscoverProjectsUsesTypedContainersAndSortsResults(t *testing.T) {
 			t.Errorf("PsOptions.All for %s = false, want true", name)
 		}
 	}
-	if gotNames := []string{got[0].Name, got[1].Name}; !reflect.DeepEqual(gotNames, []string{"alpha", "zeta"}) {
+	if gotNames := []string{got[0].Name, got[1].Name}; !slices.Equal(gotNames, []string{"alpha", "zeta"}) {
 		t.Fatalf("project order = %v", gotNames)
 	}
 	if !got[0].Eligible() || got[1].Eligible() {
@@ -209,7 +212,7 @@ func TestDiscoverProjectsReturnsListAndProjectErrors(t *testing.T) {
 
 	listErr := errors.New("list failed")
 	backend := &Backend{compose: &fakeCompose{listErr: listErr}, engine: &fakeEngine{}}
-	if _, err := backend.DiscoverProjects(context.Background()); !errors.Is(err, listErr) {
+	if _, err := backend.DiscoverProjects(t.Context()); !errors.Is(err, listErr) {
 		t.Fatalf("list error = %v", err)
 	}
 
@@ -218,7 +221,7 @@ func TestDiscoverProjectsReturnsListAndProjectErrors(t *testing.T) {
 		stacks:   []api.Stack{{Name: "app"}},
 		psErrors: map[string]error{"app": psErr},
 	}, engine: &fakeEngine{}}
-	_, err := backend.DiscoverProjects(context.Background())
+	_, err := backend.DiscoverProjects(t.Context())
 	if !errors.Is(err, psErr) || !strings.Contains(err.Error(), "project \"app\"") {
 		t.Fatalf("project list error = %v", err)
 	}
@@ -229,7 +232,7 @@ func TestDiscoverProjectsReturnsListAndProjectErrors(t *testing.T) {
 		stacks:     []api.Stack{{Name: "app"}},
 		containers: map[string][]api.ContainerSummary{"app": {invalid}},
 	}, engine: &fakeEngine{}}
-	_, err = backend.DiscoverProjects(context.Background())
+	_, err = backend.DiscoverProjects(t.Context())
 	if err == nil || !strings.Contains(err.Error(), "missing label") {
 		t.Fatalf("metadata error = %v", err)
 	}
@@ -238,7 +241,7 @@ func TestDiscoverProjectsReturnsListAndProjectErrors(t *testing.T) {
 func TestDiscoverProjectsHonorsCancellation(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	compose := &fakeCompose{stacks: []api.Stack{{Name: "app"}}}
 	backend := &Backend{compose: compose, engine: &fakeEngine{}}
@@ -249,6 +252,38 @@ func TestDiscoverProjectsHonorsCancellation(t *testing.T) {
 	}
 	if len(compose.psOptions) != 0 {
 		t.Fatalf("Ps calls = %v, want none", compose.psOptions)
+	}
+}
+
+func TestSplitLabelListPreservesPathsAndOrder(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		value string
+		want  []string
+	}{
+		{name: "missing label"},
+		{name: "empty entries", value: ",,", want: []string{}},
+		{
+			name:  "ordered paths with empty entries",
+			value: ",/srv/prod.yml,,/srv/base.yml,",
+			want:  []string{"/srv/prod.yml", "/srv/base.yml"},
+		},
+		{
+			name:  "whitespace and duplicates are preserved",
+			value: " /srv/my app.env ,/srv/prod.env, /srv/my app.env ",
+			want:  []string{" /srv/my app.env ", "/srv/prod.env", " /srv/my app.env "},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			got := splitLabelList(test.value)
+			if !slices.Equal(got, test.want) || (got == nil) != (test.want == nil) {
+				t.Fatalf("splitLabelList(%q) = %#v, want %#v", test.value, got, test.want)
+			}
+		})
 	}
 }
 

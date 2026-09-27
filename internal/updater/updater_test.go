@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -29,13 +29,13 @@ func TestRunConvergesEligibleProjectsAndSkipsStoppedProjects(t *testing.T) {
 	}}
 	reporter := &recordingReporter{}
 
-	result, err := New(backend, reporter).Run(context.Background())
+	result, err := New(backend, reporter).Run(t.Context())
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 
 	wantCalls := []string{"discover", "open:running", "pull:running", "up:running", "prune"}
-	if !reflect.DeepEqual(backend.calls, wantCalls) {
+	if !slices.Equal(backend.calls, wantCalls) {
 		t.Fatalf("calls = %v, want %v", backend.calls, wantCalls)
 	}
 	if len(result.Projects) != 2 {
@@ -55,7 +55,7 @@ func TestRunConvergesEligibleProjectsAndSkipsStoppedProjects(t *testing.T) {
 		"start:running", "finish:running:converged",
 		"prune:start", "prune:finish:ok",
 	}
-	if !reflect.DeepEqual(reporter.events, wantEvents) {
+	if !slices.Equal(reporter.events, wantEvents) {
 		t.Fatalf("reporter events = %v, want %v", reporter.events, wantEvents)
 	}
 }
@@ -73,11 +73,11 @@ func TestRunCompletesEachProjectBeforeStartingTheNext(t *testing.T) {
 	}
 	reporter := &recordingReporter{lifecycleEvents: &events}
 
-	result, err := New(backend, reporter).Run(context.Background())
+	result, err := New(backend, reporter).Run(t.Context())
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if got := statuses(result.Projects); !reflect.DeepEqual(got, []ProjectStatus{
+	if got := statuses(result.Projects); !slices.Equal(got, []ProjectStatus{
 		ProjectConverged, ProjectConverged,
 	}) {
 		t.Fatalf("statuses = %v", got)
@@ -88,7 +88,7 @@ func TestRunCompletesEachProjectBeforeStartingTheNext(t *testing.T) {
 		"start:second", "open:second", "pull:second", "up:second", "finish:second:converged",
 		"prune:start", "prune", "prune:finish:ok",
 	}
-	if !reflect.DeepEqual(events, wantEvents) {
+	if !slices.Equal(events, wantEvents) {
 		t.Fatalf("lifecycle events = %v, want %v", events, wantEvents)
 	}
 }
@@ -99,11 +99,11 @@ func TestRunDiscoveryFailureIsFatalBeforeMutation(t *testing.T) {
 	discoverErr := errors.New("daemon unavailable")
 	backend := &fakeBackend{discoverErr: discoverErr}
 
-	result, err := New(backend, nil).Run(context.Background())
+	result, err := New(backend, nil).Run(t.Context())
 	if !errors.Is(err, discoverErr) {
 		t.Fatalf("Run() error = %v, want discover error", err)
 	}
-	if !reflect.DeepEqual(backend.calls, []string{"discover"}) {
+	if !slices.Equal(backend.calls, []string{"discover"}) {
 		t.Fatalf("calls = %v, want discovery only", backend.calls)
 	}
 	if len(result.Projects) != 0 || result.PruneAttempted {
@@ -134,7 +134,7 @@ func TestRunIsolatesAndAggregatesProjectFailures(t *testing.T) {
 		upErrors:   map[string][]error{"up-fails": {upErr}},
 	}
 
-	result, err := New(backend, nil).Run(context.Background())
+	result, err := New(backend, nil).Run(t.Context())
 	for _, target := range []error{loadErr, sessionErr, pullErr, upErr} {
 		if !errors.Is(err, target) {
 			t.Errorf("Run() error = %v, want errors.Is(_, %v)", err, target)
@@ -155,10 +155,10 @@ func TestRunIsolatesAndAggregatesProjectFailures(t *testing.T) {
 		"open:succeeds", "pull:succeeds", "up:succeeds",
 		"prune",
 	}
-	if !reflect.DeepEqual(backend.calls, wantCalls) {
+	if !slices.Equal(backend.calls, wantCalls) {
 		t.Fatalf("calls = %v, want %v", backend.calls, wantCalls)
 	}
-	if got := statuses(result.Projects); !reflect.DeepEqual(got, []ProjectStatus{
+	if got := statuses(result.Projects); !slices.Equal(got, []ProjectStatus{
 		ProjectFailed, ProjectFailed, ProjectFailed, ProjectFailed, ProjectConverged,
 	}) {
 		t.Fatalf("statuses = %v", got)
@@ -184,7 +184,7 @@ func TestRunPrunesOnceWhenEveryPullFails(t *testing.T) {
 		},
 	}
 
-	result, err := New(backend, nil).Run(context.Background())
+	result, err := New(backend, nil).Run(t.Context())
 	for _, target := range []error{firstPullErr, secondPullErr} {
 		if !errors.Is(err, target) {
 			t.Errorf("Run() error = %v, want errors.Is(_, %v)", err, target)
@@ -199,7 +199,7 @@ func TestRunPrunesOnceWhenEveryPullFails(t *testing.T) {
 		"open:second", "pull:second",
 		"prune",
 	}
-	if !reflect.DeepEqual(backend.calls, wantCalls) {
+	if !slices.Equal(backend.calls, wantCalls) {
 		t.Fatalf("calls = %v, want %v", backend.calls, wantCalls)
 	}
 }
@@ -216,7 +216,7 @@ func TestRunJoinsPullAndPruneFailures(t *testing.T) {
 	}
 	reporter := &recordingReporter{}
 
-	result, err := New(backend, reporter).Run(context.Background())
+	result, err := New(backend, reporter).Run(t.Context())
 	for _, target := range []error{pullErr, pruneErr} {
 		if !errors.Is(err, target) {
 			t.Errorf("Run() error = %v, want errors.Is(_, %v)", err, target)
@@ -225,7 +225,7 @@ func TestRunJoinsPullAndPruneFailures(t *testing.T) {
 	if !result.PruneAttempted || result.Pruned {
 		t.Fatalf("prune result = attempted:%v pruned:%v", result.PruneAttempted, result.Pruned)
 	}
-	if !reflect.DeepEqual(backend.calls, []string{"discover", "open:app", "pull:app", "prune"}) {
+	if !slices.Equal(backend.calls, []string{"discover", "open:app", "pull:app", "prune"}) {
 		t.Fatalf("calls = %v", backend.calls)
 	}
 	if got := reporter.events[len(reporter.events)-1]; got != "prune:finish:error" {
@@ -243,10 +243,10 @@ func TestRunRetriesConvergenceAfterUpFailure(t *testing.T) {
 	}
 	service := New(backend, nil)
 
-	if _, err := service.Run(context.Background()); !errors.Is(err, firstUpErr) {
+	if _, err := service.Run(t.Context()); !errors.Is(err, firstUpErr) {
 		t.Fatalf("first Run() error = %v, want up error", err)
 	}
-	if _, err := service.Run(context.Background()); err != nil {
+	if _, err := service.Run(t.Context()); err != nil {
 		t.Fatalf("second Run() error = %v", err)
 	}
 
@@ -258,7 +258,7 @@ func TestRunRetriesConvergenceAfterUpFailure(t *testing.T) {
 func TestRunHonorsCancellationBeforeDiscovery(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	backend := &fakeBackend{}
 
@@ -277,7 +277,7 @@ func TestRunHonorsCancellationBeforeDiscovery(t *testing.T) {
 func TestRunStopsSchedulingAndSkipsPruneAfterCancellation(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	backend := &fakeBackend{
 		projects: []ProjectRef{
 			{Name: "first", Services: []string{"web"}},
@@ -295,7 +295,7 @@ func TestRunStopsSchedulingAndSkipsPruneAfterCancellation(t *testing.T) {
 		t.Fatalf("Run() error = %v, want context cancellation", err)
 	}
 	wantCalls := []string{"discover", "open:first", "pull:first", "up:first"}
-	if !reflect.DeepEqual(backend.calls, wantCalls) {
+	if !slices.Equal(backend.calls, wantCalls) {
 		t.Fatalf("calls = %v, want %v", backend.calls, wantCalls)
 	}
 	if result.PruneAttempted {
@@ -306,7 +306,7 @@ func TestRunStopsSchedulingAndSkipsPruneAfterCancellation(t *testing.T) {
 func TestRunReportsCancellationWhenPruneSkippedAfterConvergence(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	backend := &fakeBackend{
 		projects: []ProjectRef{{Name: "app", Services: []string{"web"}}},
 		afterUp:  func(string) { cancel() },
@@ -317,7 +317,7 @@ func TestRunReportsCancellationWhenPruneSkippedAfterConvergence(t *testing.T) {
 		t.Fatalf("Run() error = %v, want context cancellation", err)
 	}
 	wantCalls := []string{"discover", "open:app", "pull:app", "up:app"}
-	if !reflect.DeepEqual(backend.calls, wantCalls) {
+	if !slices.Equal(backend.calls, wantCalls) {
 		t.Fatalf("calls = %v, want %v", backend.calls, wantCalls)
 	}
 	if result.PruneAttempted {
@@ -354,7 +354,7 @@ func TestRunStopsWhenBackendOperationObservesCancellation(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(t.Context())
 			backend := &fakeBackend{projects: []ProjectRef{
 				{Name: "first", Services: []string{"web"}},
 				{Name: "second", Services: []string{"web"}},
@@ -365,7 +365,7 @@ func TestRunStopsWhenBackendOperationObservesCancellation(t *testing.T) {
 			if !errors.Is(err, context.Canceled) {
 				t.Fatalf("Run() error = %v, want cancellation", err)
 			}
-			if !reflect.DeepEqual(backend.calls, test.wantCalls) {
+			if !slices.Equal(backend.calls, test.wantCalls) {
 				t.Fatalf("calls = %v, want %v", backend.calls, test.wantCalls)
 			}
 			if result.PruneAttempted {
@@ -412,7 +412,7 @@ func TestRunAggregatesObservedCancellationOnce(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(t.Context())
 			backend := &fakeBackend{projects: []ProjectRef{
 				{Name: "first", Services: []string{"web"}},
 				{Name: "second", Services: []string{"web"}},
@@ -423,7 +423,7 @@ func TestRunAggregatesObservedCancellationOnce(t *testing.T) {
 			if !errors.Is(err, context.Canceled) {
 				t.Fatalf("Run() error = %v, want cancellation", err)
 			}
-			if !reflect.DeepEqual(backend.calls, test.wantCalls) {
+			if !slices.Equal(backend.calls, test.wantCalls) {
 				t.Fatalf("calls = %v, want %v", backend.calls, test.wantCalls)
 			}
 			if result.PruneAttempted {
@@ -539,11 +539,11 @@ func TestRunHandlesReporterFailuresAtOperationBoundaries(t *testing.T) {
 			}
 			reporter := &recordingReporter{failures: failures}
 
-			result, err := New(backend, reporter).Run(context.Background())
+			result, err := New(backend, reporter).Run(t.Context())
 			if !errors.Is(err, reportErr) {
 				t.Fatalf("Run() error = %v, want reporter error", err)
 			}
-			if !reflect.DeepEqual(backend.calls, test.wantCalls) {
+			if !slices.Equal(backend.calls, test.wantCalls) {
 				t.Fatalf("calls = %v, want %v", backend.calls, test.wantCalls)
 			}
 			if len(result.Projects) != test.wantProjects {

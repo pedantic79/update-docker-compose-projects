@@ -21,7 +21,7 @@ func TestRunCommandRendersSuccessfulRunWithoutDocker(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
-	code := runCommand(context.Background(), &stdout, &stderr, func() (backendCloser, error) {
+	code := runCommand(t.Context(), &stdout, &stderr, func() (backendCloser, error) {
 		return backend, nil
 	})
 
@@ -54,7 +54,7 @@ func TestRunCommandReportsPruneFailureWithoutSuccessOutput(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
-	code := runCommand(context.Background(), &stdout, &stderr, func() (backendCloser, error) {
+	code := runCommand(t.Context(), &stdout, &stderr, func() (backendCloser, error) {
 		return backend, nil
 	})
 
@@ -75,7 +75,7 @@ func TestRunCommandReportsInitializationFailure(t *testing.T) {
 	initErr := errors.New("invalid context")
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	code := runCommand(context.Background(), &stdout, &stderr, func() (backendCloser, error) {
+	code := runCommand(t.Context(), &stdout, &stderr, func() (backendCloser, error) {
 		return nil, initErr
 	})
 
@@ -96,7 +96,7 @@ func TestRunCommandReportsOutputFailure(t *testing.T) {
 	}
 	var stderr bytes.Buffer
 
-	code := runCommand(context.Background(), failingWriter{err: writeErr}, &stderr, func() (backendCloser, error) {
+	code := runCommand(t.Context(), failingWriter{err: writeErr}, &stderr, func() (backendCloser, error) {
 		return backend, nil
 	})
 
@@ -294,7 +294,7 @@ func TestRunCommandReportsRunAndCloseFailures(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
-	code := runCommand(context.Background(), &stdout, &stderr, func() (backendCloser, error) {
+	code := runCommand(t.Context(), &stdout, &stderr, func() (backendCloser, error) {
 		return backend, nil
 	})
 

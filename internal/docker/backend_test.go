@@ -1,7 +1,6 @@
 package docker
 
 import (
-	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -67,13 +66,13 @@ func TestBackendForwardsTypedOptionsWithoutDocker(t *testing.T) {
 		Services:    []string{"web", "worker"},
 	}
 
-	session, err := backend.OpenProject(context.Background(), ref)
+	session, err := backend.OpenProject(t.Context(), ref)
 	if err != nil {
 		t.Fatalf("OpenProject() error = %v", err)
 	}
 	loaded := projectFromSession(t, session)
 	services := []string{"web", "worker"}
-	if !reflect.DeepEqual(loaded.ServiceNames(), services) {
+	if !slices.Equal(loaded.ServiceNames(), services) {
 		t.Fatalf("loaded services = %v, want %v", loaded.ServiceNames(), services)
 	}
 	if dependencies := loaded.Services["web"].DependsOn; len(dependencies) != 0 {
@@ -90,7 +89,7 @@ func TestBackendForwardsTypedOptionsWithoutDocker(t *testing.T) {
 		t.Fatalf("load options = %#v, want %#v", compose.loadOptions, wantLoad)
 	}
 
-	if err := session.Pull(context.Background()); err != nil {
+	if err := session.Pull(t.Context()); err != nil {
 		t.Fatalf("Pull() error = %v", err)
 	}
 	if compose.pullProject != loaded {
@@ -100,7 +99,7 @@ func TestBackendForwardsTypedOptionsWithoutDocker(t *testing.T) {
 		t.Fatalf("pull options = %#v", compose.pullOptions)
 	}
 
-	if err := session.Up(context.Background()); err != nil {
+	if err := session.Up(t.Context()); err != nil {
 		t.Fatalf("Up() error = %v", err)
 	}
 	options := compose.upOptions
@@ -113,16 +112,16 @@ func TestBackendForwardsTypedOptionsWithoutDocker(t *testing.T) {
 	if !options.Create.Inherit || options.Create.Build == nil || options.Create.Build.Pull {
 		t.Fatalf("create/build options = %#v", options.Create)
 	}
-	if !reflect.DeepEqual(options.Create.Services, services) ||
-		!reflect.DeepEqual(options.Create.Build.Services, services) ||
-		!reflect.DeepEqual(options.Start.Services, services) {
+	if !slices.Equal(options.Create.Services, services) ||
+		!slices.Equal(options.Create.Build.Services, services) ||
+		!slices.Equal(options.Start.Services, services) {
 		t.Fatalf("service selections = create:%v build:%v start:%v", options.Create.Services, options.Create.Build.Services, options.Start.Services)
 	}
 	if options.Start.Project != loaded {
 		t.Fatal("start options did not preserve project")
 	}
 
-	if err := backend.PruneImages(context.Background()); err != nil {
+	if err := backend.PruneImages(t.Context()); err != nil {
 		t.Fatalf("PruneImages() error = %v", err)
 	}
 	if engine.pruneCalls != 1 {
@@ -151,7 +150,7 @@ func TestBackendKeepsDependencyWhenItIsAlsoSelected(t *testing.T) {
 	}
 	backend := &Backend{compose: &fakeCompose{loadResult: project}, engine: &fakeEngine{}}
 
-	session, err := backend.OpenProject(context.Background(), updater.ProjectRef{
+	session, err := backend.OpenProject(t.Context(), updater.ProjectRef{
 		Name:     "billing",
 		Services: []string{"web", "db"},
 	})
@@ -160,7 +159,7 @@ func TestBackendKeepsDependencyWhenItIsAlsoSelected(t *testing.T) {
 	}
 	loaded := projectFromSession(t, session)
 	services := []string{"db", "web"}
-	if !reflect.DeepEqual(loaded.ServiceNames(), services) {
+	if !slices.Equal(loaded.ServiceNames(), services) {
 		t.Fatalf("loaded services = %v, want %v", loaded.ServiceNames(), services)
 	}
 	if _, ok := loaded.Services["web"].DependsOn["db"]; !ok {
@@ -194,7 +193,7 @@ func TestBackendLoadsSelectedProfiledServiceWithoutItsStoppedDependency(t *testi
 	}
 	backend := &Backend{compose: service, engine: &fakeEngine{}}
 
-	session, err := backend.OpenProject(context.Background(), updater.ProjectRef{
+	session, err := backend.OpenProject(t.Context(), updater.ProjectRef{
 		Name:        "profiled",
 		ConfigPaths: []string{configPath},
 		WorkingDir:  workingDir,
@@ -204,7 +203,7 @@ func TestBackendLoadsSelectedProfiledServiceWithoutItsStoppedDependency(t *testi
 		t.Fatalf("OpenProject() error = %v", err)
 	}
 	project := projectFromSession(t, session)
-	if services := project.ServiceNames(); !reflect.DeepEqual(services, []string{"web"}) {
+	if services := project.ServiceNames(); !slices.Equal(services, []string{"web"}) {
 		t.Fatalf("loaded services = %v, want [web]", services)
 	}
 	if !slices.Contains(project.Profiles, "debug") {
@@ -228,24 +227,24 @@ func TestBackendPropagatesComposeAndEngineErrors(t *testing.T) {
 	backend := &Backend{compose: compose, engine: engine}
 	project := &types.Project{Name: "app"}
 
-	if _, err := backend.OpenProject(context.Background(), updater.ProjectRef{}); !errors.Is(err, loadErr) {
+	if _, err := backend.OpenProject(t.Context(), updater.ProjectRef{}); !errors.Is(err, loadErr) {
 		t.Errorf("OpenProject() load error = %v", err)
 	} else if !strings.Contains(err.Error(), "load Compose project") {
 		t.Errorf("OpenProject() load error = %v, want operation context", err)
 	}
 	compose.loadErr = nil
 	compose.loadResult = project
-	session, err := backend.OpenProject(context.Background(), updater.ProjectRef{Name: "app"})
+	session, err := backend.OpenProject(t.Context(), updater.ProjectRef{Name: "app"})
 	if err != nil {
 		t.Fatalf("OpenProject() error = %v", err)
 	}
-	if err := session.Pull(context.Background()); !errors.Is(err, pullErr) {
+	if err := session.Pull(t.Context()); !errors.Is(err, pullErr) {
 		t.Errorf("Pull() error = %v", err)
 	}
-	if err := session.Up(context.Background()); !errors.Is(err, upErr) {
+	if err := session.Up(t.Context()); !errors.Is(err, upErr) {
 		t.Errorf("Up() error = %v", err)
 	}
-	if err := backend.PruneImages(context.Background()); !errors.Is(err, pruneErr) {
+	if err := backend.PruneImages(t.Context()); !errors.Is(err, pruneErr) {
 		t.Errorf("PruneImages() error = %v", err)
 	}
 	if err := backend.Close(); !errors.Is(err, closeErr) {
@@ -279,7 +278,7 @@ func TestBackendUsesOneFreshProgressSessionPerProject(t *testing.T) {
 		},
 	}
 
-	firstSession, err := backend.OpenProject(context.Background(), updater.ProjectRef{
+	firstSession, err := backend.OpenProject(t.Context(), updater.ProjectRef{
 		Name:     "first",
 		Services: []string{"web"},
 	})
@@ -287,15 +286,15 @@ func TestBackendUsesOneFreshProgressSessionPerProject(t *testing.T) {
 		t.Fatalf("first OpenProject() error = %v", err)
 	}
 	firstOpenedProject := projectFromSession(t, firstSession)
-	if err := firstSession.Pull(context.Background()); err != nil {
+	if err := firstSession.Pull(t.Context()); err != nil {
 		t.Fatalf("first Pull() error = %v", err)
 	}
-	if err := firstSession.Up(context.Background()); err != nil {
+	if err := firstSession.Up(t.Context()); err != nil {
 		t.Fatalf("first Up() error = %v", err)
 	}
 
 	loader.loadResult = secondProject
-	secondSession, err := backend.OpenProject(context.Background(), updater.ProjectRef{
+	secondSession, err := backend.OpenProject(t.Context(), updater.ProjectRef{
 		Name:     "second",
 		Services: []string{"worker"},
 	})
@@ -303,10 +302,10 @@ func TestBackendUsesOneFreshProgressSessionPerProject(t *testing.T) {
 		t.Fatalf("second OpenProject() error = %v", err)
 	}
 	secondOpenedProject := projectFromSession(t, secondSession)
-	if err := secondSession.Pull(context.Background()); err != nil {
+	if err := secondSession.Pull(t.Context()); err != nil {
 		t.Fatalf("second Pull() error = %v", err)
 	}
-	if err := secondSession.Up(context.Background()); err != nil {
+	if err := secondSession.Up(t.Context()); err != nil {
 		t.Fatalf("second Up() error = %v", err)
 	}
 	if factoryCalls != 2 {
@@ -334,7 +333,7 @@ func TestBackendReturnsProgressSessionCreationError(t *testing.T) {
 			return nil, factoryErr
 		},
 	}
-	_, err := backend.OpenProject(context.Background(), updater.ProjectRef{
+	_, err := backend.OpenProject(t.Context(), updater.ProjectRef{
 		Name:     "app",
 		Services: []string{"web"},
 	})
@@ -357,7 +356,7 @@ func TestBackendRejectsUnknownSelectedService(t *testing.T) {
 		engine: &fakeEngine{},
 	}
 
-	_, err := backend.OpenProject(context.Background(), updater.ProjectRef{
+	_, err := backend.OpenProject(t.Context(), updater.ProjectRef{
 		Name:     "app",
 		Services: []string{"missing"},
 	})

@@ -3,6 +3,7 @@ package docker
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -79,16 +80,12 @@ func projectRefFromContainers(projectName string, containers []api.ContainerSumm
 	ref.ConfigPaths = splitLabelList(baseline.configFiles)
 	ref.WorkingDir = baseline.workingDir
 	ref.EnvFiles = splitLabelList(baseline.envFiles)
-	ref.Services = sortedKeys(running)
+	ref.Services = slices.Sorted(maps.Keys(running))
 	return ref, nil
 }
 
 func formatStateCounts(states map[string]int) string {
-	names := make([]string, 0, len(states))
-	for state := range states {
-		names = append(names, state)
-	}
-	slices.Sort(names)
+	names := slices.Sorted(maps.Keys(states))
 
 	parts := make([]string, 0, len(names))
 	for _, state := range names {
@@ -171,21 +168,11 @@ func splitLabelList(value string) []string {
 		return nil
 	}
 
-	parts := strings.Split(value, ",")
-	result := make([]string, 0, len(parts))
-	for _, part := range parts {
+	result := make([]string, 0, strings.Count(value, ",")+1)
+	for part := range strings.SplitSeq(value, ",") {
 		if part != "" {
 			result = append(result, part)
 		}
 	}
-	return result
-}
-
-func sortedKeys(values map[string]struct{}) []string {
-	result := make([]string, 0, len(values))
-	for value := range values {
-		result = append(result, value)
-	}
-	slices.Sort(result)
 	return result
 }
