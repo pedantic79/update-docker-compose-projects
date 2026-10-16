@@ -1,6 +1,6 @@
 module github.com/pedantic79/update-docker-compose-projects
 
-go 1.27.1
+go 1.27.2
 
 require (
 	github.com/compose-spec/compose-go/v2 v2.15.0

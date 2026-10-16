@@ -41,6 +41,9 @@ running-service selection, and Docker adapter option construction.
 
 ## Development checks
 
+Use Go 1.27.2 or newer and golangci-lint 2.14.0 or newer. Older linter
+versions cannot read the Go 1.27.2 compiler's export data.
+
 Format Go code with:
 
 ```sh
