@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"testing"
+	"testing/synctest"
 
 	"github.com/docker/cli/cli/streams"
 	"github.com/docker/compose/v5/pkg/api"
@@ -65,18 +66,40 @@ func TestProjectEventProcessorKeepsTerminalProgressScopedToProject(t *testing.T)
 	t.Setenv("NO_COLOR", "")
 	t.Setenv("TERM", "xterm-256color")
 
-	var output bytes.Buffer
-	out := streams.NewOut(&output)
-	out.SetIsTerminal(true)
-	first := projectEventProcessor(out, io.Discard)
-	first.On(api.Resource{ID: "Image first", Text: "Pulled", Status: api.Done})
+	synctest.Test(t, func(t *testing.T) {
+		var output bytes.Buffer
+		out := streams.NewOut(&output)
+		out.SetIsTerminal(true)
+		first := projectEventProcessor(out, io.Discard)
+		first.Start(t.Context(), "pull")
+		first.On(api.Resource{ID: "Image first", Text: "Pulled", Status: api.Done})
+		first.Done("pull", true)
+		// Wait for the renderer's goroutine before inspecting or resetting output.
+		synctest.Wait()
+		if !bytes.Contains(output.Bytes(), []byte("Image first")) {
+			t.Fatalf("first project pull progress is missing: %q", output.String())
+		}
 
-	output.Reset()
-	second := projectEventProcessor(out, io.Discard)
-	second.On(api.Resource{ID: "Image second", Text: "Pulled", Status: api.Done})
-	if !bytes.Contains(output.Bytes(), []byte("second")) || bytes.Contains(output.Bytes(), []byte("first")) {
-		t.Fatalf("second project progress includes stale first project: %q", output.String())
-	}
+		output.Reset()
+		first.Start(t.Context(), "up")
+		first.On(api.Resource{ID: "Container first-web", Text: "Recreated", Status: api.Done})
+		first.Done("up", true)
+		synctest.Wait()
+		if !bytes.Contains(output.Bytes(), []byte("Image first")) ||
+			!bytes.Contains(output.Bytes(), []byte("Container first-web")) {
+			t.Fatalf("first project did not retain pull progress through up: %q", output.String())
+		}
+
+		output.Reset()
+		second := projectEventProcessor(out, io.Discard)
+		second.Start(t.Context(), "pull")
+		second.On(api.Resource{ID: "Image second", Text: "Pulled", Status: api.Done})
+		second.Done("pull", true)
+		synctest.Wait()
+		if !bytes.Contains(output.Bytes(), []byte("Image second")) || bytes.Contains(output.Bytes(), []byte("first")) {
+			t.Fatalf("second project progress includes stale first project: %q", output.String())
+		}
+	})
 }
 
 func TestLineClearingWriterClearsEveryCompletedLine(t *testing.T) {
